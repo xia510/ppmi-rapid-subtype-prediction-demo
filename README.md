@@ -59,4 +59,5 @@ python app/predictor.py --input examples/sample_patient.json --artifact artifact
 ## Learning log
 
 - 2026-09-14: Initialized the Git repository and pushed the project to GitHub.
+- 2026-09-14: Practiced the Git command-line workflow.
 
