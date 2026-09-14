@@ -1,0 +1,1 @@
+"""Prediction application package."""

@@ -1,0 +1,13 @@
+# Python 自动缓存
+__pycache__/
+*.py[cod]
+
+# 本地虚拟环境与密钥
+.venv/
+.env
+
+# 每次预测生成的结果
+outputs/
+
+# 二进制模型文件：可由 export_model.py 重新导出
+artifacts/*.joblib
