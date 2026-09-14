@@ -55,3 +55,8 @@ python app/predictor.py --input examples/sample_patient.json --artifact artifact
 ## 免责声明
 
 本项目仅用于科研复现与工程学习演示，不可用于临床诊断或医疗决策。
+
+## Learning log
+
+- 2026-09-14: Initialized the Git repository and pushed the project to GitHub.
+
