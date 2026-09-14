@@ -6,6 +6,9 @@ __pycache__/
 .venv/
 .env
 
+# Git 独立开发工作区
+.worktrees/
+
 # 每次预测生成的结果
 outputs/
 
