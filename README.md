@@ -48,6 +48,25 @@ python scripts/export_model.py
 python app/predictor.py --input examples/sample_patient.json --artifact artifacts/model_bundle.joblib --output outputs/prediction.json
 ```
 
+## FastAPI 服务
+
+先在本地导出模型文件（该二进制文件不会提交到 Git）：
+
+```powershell
+python scripts/export_model.py
+```
+
+启动 API 服务：
+
+```powershell
+python -m uvicorn app.api:app --reload
+```
+
+然后在浏览器打开 `http://127.0.0.1:8000/docs`。页面会自动展示：
+
+- `GET /health`：服务状态、模型文件是否可用；
+- `POST /predict`：输入 12 项原始特征 JSON，返回校准概率、研究阈值与全部特征贡献度。
+
 ## 结果解释
 
 `rapid_probability` 是校准后的 Rapid 亚型概率；`research_threshold` 是原研究流程中通过交叉验证得到的研究阈值。`contribution` 表示特征对逻辑回归线性得分的贡献，不能被解释为因果效应或临床建议。

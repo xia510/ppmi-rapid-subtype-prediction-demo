@@ -69,10 +69,12 @@ def _top_contributors(
     return rows, positive, negative
 
 
-def predict_from_json(input_path: Path, artifact_path: Path, output_path: Path) -> dict:
-    """Load one raw patient JSON file, predict Rapid probability, and save result JSON."""
+def predict_from_patient(patient: dict, artifact_path: Path) -> dict:
+    """Predict Rapid probability from one in-memory raw patient dictionary."""
+    if not isinstance(patient, dict):
+        raise InputValidationError("Patient data must contain one object.")
+
     bundle = joblib.load(artifact_path)
-    patient = _load_patient(input_path)
     patient_frame = _feature_frame(patient, bundle["feature_names"])
 
     standardized_features = bundle["scaler"].transform(patient_frame)
@@ -107,6 +109,13 @@ def predict_from_json(input_path: Path, artifact_path: Path, output_path: Path) 
         ),
         "disclaimer": "Research demonstration only. Not for clinical diagnosis.",
     }
+    return result
+
+
+def predict_from_json(input_path: Path, artifact_path: Path, output_path: Path) -> dict:
+    """Load one raw patient JSON file, predict Rapid probability, and save result JSON."""
+    patient = _load_patient(input_path)
+    result = predict_from_patient(patient, artifact_path)
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)

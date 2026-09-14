@@ -12,7 +12,7 @@ import pandas as pd
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_DIR))
 
-from app.predictor import InputValidationError, predict_from_json
+from app.predictor import InputValidationError, predict_from_json, predict_from_patient
 from scripts.export_model import export_model_bundle
 
 
@@ -20,7 +20,7 @@ SOURCE_ROOT = Path(r"C:\Users\20284\Documents\trae_projects\code_xuexi_001")
 
 
 class PredictorTests(unittest.TestCase):
-    def _write_patient_json(self, path: Path, remove_field: Optional[str] = None) -> None:
+    def _patient_payload(self, remove_field: Optional[str] = None) -> dict:
         raw_train = pd.read_csv(SOURCE_ROOT / "PPMI_4_LASSO_train_raw.csv")
         selected_train = pd.read_csv(SOURCE_ROOT / "PPMI_4_LASSO_train_1se.csv")
         features = [column for column in selected_train.columns if column not in ("PATNO", "Target")]
@@ -29,7 +29,23 @@ class PredictorTests(unittest.TestCase):
         patient.update({feature: float(row[feature]) for feature in features})
         if remove_field:
             patient.pop(remove_field)
+        return patient
+
+    def _write_patient_json(self, path: Path, remove_field: Optional[str] = None) -> None:
+        patient = self._patient_payload(remove_field=remove_field)
         path.write_text(json.dumps(patient), encoding="utf-8")
+
+    def test_predicts_from_raw_patient_dictionary_without_writing_file(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            artifact_path = Path(tmp_dir) / "model_bundle.joblib"
+            export_model_bundle(SOURCE_ROOT, artifact_path)
+
+            result = predict_from_patient(self._patient_payload(), artifact_path)
+
+            self.assertEqual(result["patient_id"], "demo-139982")
+            self.assertGreaterEqual(result["rapid_probability"], 0.0)
+            self.assertLessEqual(result["rapid_probability"], 1.0)
+            self.assertEqual(len(result["all_feature_contributions"]), 12)
 
     def test_predicts_from_raw_patient_json_and_writes_result_json(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
