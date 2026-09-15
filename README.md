@@ -67,6 +67,25 @@ python -m uvicorn app.api:app --reload
 - `GET /health`：服务状态、模型文件是否可用；
 - `POST /predict`：输入 12 项原始特征 JSON，返回校准概率、研究阈值与全部特征贡献度。
 
+## Streamlit 预测网页
+
+网页通过 HTTP 调用上面的 FastAPI 服务，不会重复训练或加载模型。请打开两个终端：
+
+第一个终端启动后端：
+
+```powershell
+python scripts/export_model.py
+python -m uvicorn app.api:app --reload
+```
+
+第二个终端启动网页：
+
+```powershell
+python -m streamlit run ui/dashboard.py
+```
+
+浏览器打开 `http://127.0.0.1:8501`。网页可加载示例数据、提交 12 项特征、展示后端状态、校准概率、研究阈值和贡献度。关闭后端时，网页会提示连接失败。
+
 ## 结果解释
 
 `rapid_probability` 是校准后的 Rapid 亚型概率；`research_threshold` 是原研究流程中通过交叉验证得到的研究阈值。`contribution` 表示特征对逻辑回归线性得分的贡献，不能被解释为因果效应或临床建议。

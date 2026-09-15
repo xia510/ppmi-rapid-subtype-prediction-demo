@@ -4,3 +4,5 @@ joblib==1.5.1
 fastapi
 uvicorn[standard]
 httpx
+requests
+streamlit
