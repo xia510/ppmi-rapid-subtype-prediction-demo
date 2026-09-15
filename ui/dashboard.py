@@ -50,6 +50,8 @@ def format_api_error(status_code: int, detail: Any) -> str:
                 return f"输入不完整：{', '.join(missing_features)} 为必填特征。"
         return "输入格式不正确，请检查 12 项特征是否均为有效数字。"
     if status_code == 503:
+        if "DEEPSEEK_API_KEY" in str(detail):
+            return "后端尚未配置 DEEPSEEK_API_KEY，请在启动 FastAPI 的终端设置该环境变量后重启服务。"
         return "后端未找到模型文件。请先运行 scripts/export_model.py。"
     return f"预测接口返回错误（HTTP {status_code}）：{detail}"
 
@@ -71,6 +73,27 @@ def request_prediction(payload: dict) -> tuple[Optional[dict], Optional[str]]:
             f"{API_BASE_URL}/predict",
             json=payload,
             timeout=10,
+        )
+    except requests.RequestException:
+        return None, "无法连接预测后端。请确认 FastAPI 服务正在 127.0.0.1:8000 运行。"
+
+    if response.ok:
+        return response.json(), None
+
+    try:
+        detail = response.json().get("detail", response.text)
+    except ValueError:
+        detail = response.text
+    return None, format_api_error(response.status_code, detail)
+
+
+def request_explanation(payload: dict) -> tuple[Optional[dict], Optional[str]]:
+    """Ask the backend to predict locally and request a de-identified DeepSeek explanation."""
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/explain",
+            json=payload,
+            timeout=40,
         )
     except requests.RequestException:
         return None, "无法连接预测后端。请确认 FastAPI 服务正在 127.0.0.1:8000 运行。"
@@ -203,9 +226,43 @@ def main() -> None:
             st.error(error)
         else:
             st.session_state["prediction_result"] = result
+            st.session_state["last_prediction_payload"] = payload
+            st.session_state.pop("deepseek_interpretation", None)
 
     if "prediction_result" in st.session_state:
         _render_result(st.session_state["prediction_result"])
+
+        st.subheader("DeepSeek 科研辅助解读")
+        st.caption(
+            "点击后，后端仅会向 DeepSeek 发送去标识化的概率、阈值和贡献度摘要；"
+            "不会发送 Patient ID 或 12 项原始特征。"
+        )
+        consent = st.checkbox(
+            "我理解该操作会调用外部 DeepSeek API，结果仅用于科研演示。",
+            key="deepseek_consent",
+        )
+        if st.button("生成 DeepSeek 辅助解读"):
+            if not consent:
+                st.warning("请先确认外部 API 调用说明。")
+            else:
+                with st.spinner("正在请求 DeepSeek 辅助解读..."):
+                    explanation, error = request_explanation(
+                        st.session_state["last_prediction_payload"]
+                    )
+                if error:
+                    st.error(error)
+                else:
+                    st.session_state["deepseek_interpretation"] = explanation[
+                        "interpretation"
+                    ]
+
+        if "deepseek_interpretation" in st.session_state:
+            interpretation = st.session_state["deepseek_interpretation"]
+            st.info(interpretation["text"])
+            st.caption(
+                f"提供方：{interpretation['provider']} · 模型：{interpretation['model']}"
+            )
+            st.warning(interpretation["disclaimer"])
 
 
 if __name__ == "__main__":

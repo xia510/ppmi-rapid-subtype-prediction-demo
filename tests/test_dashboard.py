@@ -1,12 +1,18 @@
 import sys
 from pathlib import Path
 import unittest
+from unittest.mock import Mock, patch
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_DIR))
 
-from ui.dashboard import FEATURE_NAMES, build_patient_payload, format_api_error
+from ui.dashboard import (
+    FEATURE_NAMES,
+    build_patient_payload,
+    format_api_error,
+    request_explanation,
+)
 
 
 class DashboardHelperTests(unittest.TestCase):
@@ -27,6 +33,23 @@ class DashboardHelperTests(unittest.TestCase):
 
         self.assertIn("LEDD", message)
         self.assertIn("必填", message)
+
+    def test_format_api_error_explains_missing_deepseek_key(self):
+        message = format_api_error(503, "DEEPSEEK_API_KEY is not configured on the API service.")
+
+        self.assertIn("DEEPSEEK_API_KEY", message)
+
+    def test_request_explanation_posts_to_the_separate_explain_endpoint(self):
+        response = Mock()
+        response.ok = True
+        response.json.return_value = {"interpretation": {"text": "科研辅助解读。"}}
+
+        with patch("ui.dashboard.requests.post", return_value=response) as post:
+            result, error = request_explanation({"scopa": 1.0})
+
+        self.assertIsNone(error)
+        self.assertEqual(result["interpretation"]["text"], "科研辅助解读。")
+        self.assertTrue(post.call_args.args[0].endswith("/explain"))
 
 
 if __name__ == "__main__":

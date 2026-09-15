@@ -1,11 +1,16 @@
 """FastAPI endpoints for the PPMI Rapid-subtype prediction demonstration."""
 
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from app.deepseek import (
+    DeepSeekConfigurationError,
+    DeepSeekRequestError,
+    request_interpretation,
+)
 from app.predictor import InputValidationError, predict_from_patient
 
 
@@ -31,9 +36,31 @@ class PatientRequest(BaseModel):
     quip: float
 
 
-def create_app(artifact_path: Optional[Path] = None) -> FastAPI:
+def _prediction_for_external_explanation(prediction: dict) -> dict:
+    """Keep only derived, de-identified fields needed by the external LLM."""
+    return {
+        "rapid_probability": prediction["rapid_probability"],
+        "research_threshold": prediction["research_threshold"],
+        "prediction_label": prediction["prediction_label"],
+        "model_version": prediction["model_version"],
+        "top_positive_contributors": [
+            {"feature": row["feature"], "contribution": row["contribution"]}
+            for row in prediction["top_positive_contributors"]
+        ],
+        "top_negative_contributors": [
+            {"feature": row["feature"], "contribution": row["contribution"]}
+            for row in prediction["top_negative_contributors"]
+        ],
+    }
+
+
+def create_app(
+    artifact_path: Optional[Path] = None,
+    explainer: Optional[Callable[[dict], dict]] = None,
+) -> FastAPI:
     """Create the API app, optionally using a test-specific model artifact."""
     resolved_artifact_path = Path(artifact_path or DEFAULT_ARTIFACT_PATH)
+    resolved_explainer = explainer or request_interpretation
     api = FastAPI(
         title="PPMI Rapid Subtype Prediction Demo",
         description="Research demonstration API. Not for clinical diagnosis.",
@@ -62,6 +89,28 @@ def create_app(artifact_path: Optional[Path] = None) -> FastAPI:
             ) from error
         except InputValidationError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @api.post("/explain")
+    def explain(patient: PatientRequest) -> dict:
+        """Predict locally, then ask DeepSeek to explain only de-identified model output."""
+        try:
+            prediction = predict_from_patient(patient.model_dump(), resolved_artifact_path)
+        except FileNotFoundError as error:
+            raise HTTPException(
+                status_code=503,
+                detail="Model artifact is unavailable. Export it before starting the API.",
+            ) from error
+        except InputValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+        try:
+            interpretation = resolved_explainer(_prediction_for_external_explanation(prediction))
+        except DeepSeekConfigurationError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        except DeepSeekRequestError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+
+        return {"prediction": prediction, "interpretation": interpretation}
 
     return api
 

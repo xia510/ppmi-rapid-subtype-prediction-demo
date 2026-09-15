@@ -86,6 +86,22 @@ python -m streamlit run ui/dashboard.py
 
 浏览器打开 `http://127.0.0.1:8501`。网页可加载示例数据、提交 12 项特征、展示后端状态、校准概率、研究阈值和贡献度。关闭后端时，网页会提示连接失败。
 
+## DeepSeek 科研辅助解读
+
+网页在完成本地预测后，可额外调用 DeepSeek 生成中文科研辅助解读。预测概率、阈值和贡献度仍完全由本地 Logistic Regression 模型计算；DeepSeek 不参与预测或分类。
+
+调用前，网页会要求确认外部 API 调用。后端只向 DeepSeek 发送去标识化的模型输出摘要：概率、研究阈值、研究标签及 Top 正负贡献特征；不会发送 `patient_id` 或 12 项原始特征。
+
+在**启动 FastAPI 的终端**中设置密钥。不要将密钥发到聊天、写进代码或提交到 Git：
+
+```powershell
+$env:DEEPSEEK_API_KEY = "你的 DeepSeek API Key"
+$env:DEEPSEEK_MODEL = "deepseek-flash"
+python -m uvicorn app.api:app --reload
+```
+
+随后在网页完成一次预测，勾选外部调用确认，点击“生成 DeepSeek 辅助解读”。接口为 `POST /explain`；它会先在本地预测，再调用 DeepSeek。当前默认模型为 `deepseek-flash`，接口地址为 `https://api.deepseek.com/chat/completions`。
+
 ## 结果解释
 
 `rapid_probability` 是校准后的 Rapid 亚型概率；`research_threshold` 是原研究流程中通过交叉验证得到的研究阈值。`contribution` 表示特征对逻辑回归线性得分的贡献，不能被解释为因果效应或临床建议。
@@ -98,4 +114,5 @@ python -m streamlit run ui/dashboard.py
 
 - 2026-09-14: Initialized the Git repository and pushed the project to GitHub.
 - 2026-09-14: Practiced the Git command-line workflow.
+- 2026-09-15: Added an optional DeepSeek research-explanation API flow.
 

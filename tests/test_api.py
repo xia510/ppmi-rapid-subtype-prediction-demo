@@ -21,9 +21,9 @@ class ApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp_dir = tempfile.TemporaryDirectory()
-        artifact_path = Path(cls.temp_dir.name) / "model_bundle.joblib"
-        export_model_bundle(SOURCE_ROOT, artifact_path)
-        cls.client = TestClient(create_app(artifact_path))
+        cls.artifact_path = Path(cls.temp_dir.name) / "model_bundle.joblib"
+        export_model_bundle(SOURCE_ROOT, cls.artifact_path)
+        cls.client = TestClient(create_app(cls.artifact_path))
 
         raw_train = pd.read_csv(SOURCE_ROOT / "PPMI_4_LASSO_train_raw.csv")
         selected_train = pd.read_csv(SOURCE_ROOT / "PPMI_4_LASSO_train_1se.csv")
@@ -65,6 +65,26 @@ class ApiTests(unittest.TestCase):
         response = self.client.post("/predict", json=incomplete_patient)
 
         self.assertEqual(response.status_code, 422)
+
+    def test_explain_combines_existing_prediction_with_an_injected_llm_explanation(self):
+        received_prediction = {}
+
+        def fake_explainer(prediction):
+            received_prediction.update(prediction)
+            return {
+                "provider": "DeepSeek",
+                "model": "deepseek-flash",
+                "text": "科研辅助解读。",
+                "disclaimer": "AI-generated research explanation only. Not clinical advice.",
+            }
+
+        client = TestClient(create_app(self.artifact_path, fake_explainer))
+        response = client.post("/explain", json=self.valid_patient)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["interpretation"]["text"], "科研辅助解读。")
+        self.assertEqual(response.json()["prediction"]["patient_id"], "api-demo-1")
+        self.assertNotIn("patient_id", received_prediction)
 
 
 if __name__ == "__main__":
