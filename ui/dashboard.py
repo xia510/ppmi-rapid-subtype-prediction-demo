@@ -122,20 +122,20 @@ def _render_result(result: dict) -> None:
     positive.dataframe(
         pd.DataFrame(result["top_positive_contributors"])[["feature", "contribution"]],
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
     )
     negative.markdown("#### 负向贡献 Top 3")
     negative.dataframe(
         pd.DataFrame(result["top_negative_contributors"])[["feature", "contribution"]],
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
     )
 
     with st.expander("查看全部 12 项特征贡献度"):
         st.dataframe(
             pd.DataFrame(result["all_feature_contributions"]),
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
     st.caption(result["explanation_note"])
     st.warning(result["disclaimer"])
