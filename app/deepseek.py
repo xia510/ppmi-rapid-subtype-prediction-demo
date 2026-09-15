@@ -60,6 +60,7 @@ def build_interpretation_request(prediction: Dict[str, Any]) -> Dict[str, Any]:
         ],
         "temperature": 0.2,
         "max_tokens": 400,
+        "thinking": {"type": "disabled"},
         "stream": False,
     }
 

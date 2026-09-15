@@ -44,6 +44,7 @@ class DeepSeekExplanationTests(unittest.TestCase):
         serialized_messages = json.dumps(request["messages"], ensure_ascii=False)
 
         self.assertEqual(request["model"], "deepseek-flash")
+        self.assertEqual(request["thinking"], {"type": "disabled"})
         self.assertNotIn("must-not-leave-the-service", serialized_messages)
         self.assertIn("8.70%", serialized_messages)
         self.assertIn("quip", serialized_messages)
