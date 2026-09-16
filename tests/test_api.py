@@ -74,7 +74,9 @@ class ApiTests(unittest.TestCase):
             return {
                 "provider": "DeepSeek",
                 "model": "deepseek-flash",
-                "text": "科研辅助解读。",
+                "probability_summary": "概率说明。",
+                "contribution_summary": "贡献说明。",
+                "research_disclaimer": "仅供科研演示。",
                 "disclaimer": "AI-generated research explanation only. Not clinical advice.",
             }
 
@@ -82,7 +84,12 @@ class ApiTests(unittest.TestCase):
         response = client.post("/explain", json=self.valid_patient)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["interpretation"]["text"], "科研辅助解读。")
+        self.assertEqual(
+            response.json()["interpretation"]["probability_summary"], "概率说明。"
+        )
+        self.assertEqual(
+            response.json()["interpretation"]["contribution_summary"], "贡献说明。"
+        )
         self.assertEqual(response.json()["prediction"]["patient_id"], "api-demo-1")
         self.assertNotIn("patient_id", received_prediction)
 

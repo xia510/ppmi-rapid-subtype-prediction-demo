@@ -108,6 +108,15 @@ def request_explanation(payload: dict) -> tuple[Optional[dict], Optional[str]]:
     return None, format_api_error(response.status_code, detail)
 
 
+def structured_interpretation_sections(interpretation: dict) -> list[tuple[str, str]]:
+    """Map validated DeepSeek fields to the stable Chinese headings shown on the page."""
+    return [
+        ("概率与阈值", interpretation["probability_summary"]),
+        ("特征贡献说明", interpretation["contribution_summary"]),
+        ("科研使用说明", interpretation["research_disclaimer"]),
+    ]
+
+
 def load_example() -> dict:
     """Load the tracked, non-sensitive demonstration payload."""
     return json.loads(SAMPLE_PATH.read_text(encoding="utf-8"))
@@ -258,7 +267,12 @@ def main() -> None:
 
         if "deepseek_interpretation" in st.session_state:
             interpretation = st.session_state["deepseek_interpretation"]
-            st.info(interpretation["text"])
+            for heading, content in structured_interpretation_sections(interpretation):
+                st.markdown(f"#### {heading}")
+                if heading == "科研使用说明":
+                    st.warning(content)
+                else:
+                    st.info(content)
             st.caption(
                 f"提供方：{interpretation['provider']} · 模型：{interpretation['model']}"
             )
