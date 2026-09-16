@@ -13,6 +13,7 @@ from ui.dashboard import (
     format_api_error,
     request_explanation,
 )
+import ui.dashboard as dashboard
 
 
 class DashboardHelperTests(unittest.TestCase):
@@ -42,14 +43,40 @@ class DashboardHelperTests(unittest.TestCase):
     def test_request_explanation_posts_to_the_separate_explain_endpoint(self):
         response = Mock()
         response.ok = True
-        response.json.return_value = {"interpretation": {"text": "科研辅助解读。"}}
+        response.json.return_value = {
+            "interpretation": {
+                "probability_summary": "概率说明。",
+                "contribution_summary": "贡献说明。",
+                "research_disclaimer": "仅供科研演示。",
+            }
+        }
 
         with patch("ui.dashboard.requests.post", return_value=response) as post:
             result, error = request_explanation({"scopa": 1.0})
 
         self.assertIsNone(error)
-        self.assertEqual(result["interpretation"]["text"], "科研辅助解读。")
+        self.assertEqual(result["interpretation"]["contribution_summary"], "贡献说明。")
         self.assertTrue(post.call_args.args[0].endswith("/explain"))
+
+    def test_structured_interpretation_sections_have_fixed_chinese_headings(self):
+        self.assertTrue(hasattr(dashboard, "structured_interpretation_sections"))
+
+        sections = dashboard.structured_interpretation_sections(
+            {
+                "probability_summary": "概率说明。",
+                "contribution_summary": "贡献说明。",
+                "research_disclaimer": "仅供科研演示。",
+            }
+        )
+
+        self.assertEqual(
+            sections,
+            [
+                ("概率与阈值", "概率说明。"),
+                ("特征贡献说明", "贡献说明。"),
+                ("科研使用说明", "仅供科研演示。"),
+            ],
+        )
 
 
 if __name__ == "__main__":

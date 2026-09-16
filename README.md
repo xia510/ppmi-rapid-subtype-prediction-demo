@@ -102,6 +102,8 @@ python -m uvicorn app.api:app --reload
 
 随后在网页完成一次预测，勾选外部调用确认，点击“生成 DeepSeek 辅助解读”。接口为 `POST /explain`；它会先在本地预测，再调用 DeepSeek。当前默认模型为 `deepseek-flash`，接口地址为 `https://api.deepseek.com/chat/completions`。
 
+DeepSeek 会被要求返回 JSON；本地 API 会校验“概率与阈值、特征贡献、科研使用说明”这三项非空文本后，才把结果返回给网页。
+
 ## 结果解释
 
 `rapid_probability` 是校准后的 Rapid 亚型概率；`research_threshold` 是原研究流程中通过交叉验证得到的研究阈值。`contribution` 表示特征对逻辑回归线性得分的贡献，不能被解释为因果效应或临床建议。

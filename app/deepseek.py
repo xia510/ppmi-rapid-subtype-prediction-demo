@@ -5,12 +5,21 @@ import os
 from typing import Any, Callable, Dict, Optional
 
 import requests
+from pydantic import BaseModel, ConfigDict, ValidationError, constr
 
 
 DEEPSEEK_CHAT_URL = "https://api.deepseek.com/chat/completions"
 DEFAULT_MODEL = "deepseek-flash"
 SYSTEM_PROMPT = """你是科研模型输出的辅助解释助手。只根据提供的模型结果进行中文转述。
-不得给出诊断、治疗、用药或个人医疗建议；不得将特征贡献解释为因果关系；必须提醒结果仅供科研演示。"""
+不得给出诊断、治疗、用药或个人医疗建议；不得将特征贡献解释为因果关系；必须提醒结果仅供科研演示。
+
+必须只输出一个 JSON 对象，且只能包含以下三个非空字符串字段：
+{
+  "probability_summary": "概率与研究阈值的关系",
+  "contribution_summary": "正负贡献特征对模型线性得分的说明",
+  "research_disclaimer": "科研演示、非临床诊断且贡献度非因果关系的说明"
+}
+不要添加 Markdown、代码块或任何其他字段。"""
 
 
 class DeepSeekConfigurationError(RuntimeError):
@@ -19,6 +28,16 @@ class DeepSeekConfigurationError(RuntimeError):
 
 class DeepSeekRequestError(RuntimeError):
     """Raised when DeepSeek cannot return a usable completion."""
+
+
+class StructuredInterpretation(BaseModel):
+    """The three non-empty research-only statements accepted from DeepSeek."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    probability_summary: constr(strip_whitespace=True, min_length=1)
+    contribution_summary: constr(strip_whitespace=True, min_length=1)
+    research_disclaimer: constr(strip_whitespace=True, min_length=1)
 
 
 def _contributor_lines(contributors: list[dict]) -> str:
@@ -61,6 +80,7 @@ def build_interpretation_request(prediction: Dict[str, Any]) -> Dict[str, Any]:
         "temperature": 0.2,
         "max_tokens": 400,
         "thinking": {"type": "disabled"},
+        "response_format": {"type": "json_object"},
         "stream": False,
     }
 
@@ -91,7 +111,15 @@ def request_interpretation(
         response.raise_for_status()
         response_data = response.json()
         text = response_data["choices"][0]["message"]["content"].strip()
-    except (requests.RequestException, KeyError, IndexError, TypeError, ValueError) as error:
+        structured = StructuredInterpretation.model_validate(json.loads(text))
+    except (
+        requests.RequestException,
+        KeyError,
+        IndexError,
+        TypeError,
+        ValueError,
+        ValidationError,
+    ) as error:
         raise DeepSeekRequestError("DeepSeek did not return a usable interpretation.") from error
 
     if not text:
@@ -100,7 +128,7 @@ def request_interpretation(
     return {
         "provider": "DeepSeek",
         "model": str(response_data.get("model", payload["model"])),
-        "text": text,
+        **structured.model_dump(),
         "disclaimer": "AI-generated research explanation only. Not clinical advice.",
     }
 
