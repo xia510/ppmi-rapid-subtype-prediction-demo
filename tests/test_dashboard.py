@@ -40,6 +40,22 @@ class DashboardHelperTests(unittest.TestCase):
 
         self.assertIn("DEEPSEEK_API_KEY", message)
 
+    def test_format_api_error_includes_safe_request_id_for_structured_errors(self):
+        message = format_api_error(
+            503,
+            {
+                "error": {
+                    "code": "deepseek_not_configured",
+                    "message": "Do not render this internal text.",
+                },
+                "request_id": "abc123def456",
+            },
+        )
+
+        self.assertIn("DEEPSEEK_API_KEY", message)
+        self.assertIn("请求编号：abc123def456", message)
+        self.assertNotIn("Do not render this internal text.", message)
+
     def test_request_explanation_posts_to_the_separate_explain_endpoint(self):
         response = Mock()
         response.ok = True

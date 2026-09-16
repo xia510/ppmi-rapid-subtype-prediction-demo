@@ -39,6 +39,21 @@ def build_patient_payload(patient_id: str, raw_values: dict[str, object]) -> dic
 
 def format_api_error(status_code: int, detail: Any) -> str:
     """Turn expected FastAPI errors into a concise, user-facing message."""
+    if isinstance(detail, dict) and isinstance(detail.get("error"), dict):
+        error_code = detail["error"].get("code")
+        messages = {
+            "invalid_input": "输入格式不正确，请检查 12 项特征是否均为有效数字。",
+            "model_artifact_unavailable": "后端未找到模型文件。请先运行 scripts/export_model.py。",
+            "deepseek_not_configured": (
+                "后端尚未配置 DEEPSEEK_API_KEY，请在启动 FastAPI 的终端设置该环境变量后重启服务。"
+            ),
+            "deepseek_unavailable": "DeepSeek 暂时未能返回可用的科研辅助解读，请稍后重试。",
+        }
+        message = messages.get(error_code, "后端发生了未分类错误，请稍后重试。")
+        request_id = detail.get("request_id")
+        if request_id:
+            return f"{message} 请求编号：{request_id}"
+        return message
     if status_code == 422:
         if isinstance(detail, list):
             missing_features = [
@@ -81,7 +96,7 @@ def request_prediction(payload: dict) -> tuple[Optional[dict], Optional[str]]:
         return response.json(), None
 
     try:
-        detail = response.json().get("detail", response.text)
+        detail = response.json()
     except ValueError:
         detail = response.text
     return None, format_api_error(response.status_code, detail)
@@ -102,7 +117,7 @@ def request_explanation(payload: dict) -> tuple[Optional[dict], Optional[str]]:
         return response.json(), None
 
     try:
-        detail = response.json().get("detail", response.text)
+        detail = response.json()
     except ValueError:
         detail = response.text
     return None, format_api_error(response.status_code, detail)

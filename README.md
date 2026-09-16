@@ -104,6 +104,10 @@ python -m uvicorn app.api:app --reload
 
 DeepSeek 会被要求返回 JSON；本地 API 会校验“概率与阈值、特征贡献、科研使用说明”这三项非空文本后，才把结果返回给网页。
 
+### 排错与请求编号
+
+FastAPI 会在启动它的终端输出每次请求的安全日志：请求编号、路径、状态码和耗时；不会记录 API Key、Patient ID 或 12 项原始特征。网页出现错误时会显示“请求编号”。排查问题时只需提供该编号，不要发送密钥或原始受试者数据。
+
 ## 结果解释
 
 `rapid_probability` 是校准后的 Rapid 亚型概率；`research_threshold` 是原研究流程中通过交叉验证得到的研究阈值。`contribution` 表示特征对逻辑回归线性得分的贡献，不能被解释为因果效应或临床建议。
