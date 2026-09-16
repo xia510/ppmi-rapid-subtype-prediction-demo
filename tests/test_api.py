@@ -11,6 +11,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_DIR))
 
 from app.api import app, create_app
+from app.deepseek import DeepSeekConfigurationError
 from scripts.export_model import export_model_bundle
 
 
@@ -44,6 +45,7 @@ class ApiTests(unittest.TestCase):
         response = TestClient(app).get("/health")
 
         self.assertEqual(response.status_code, 200)
+        self.assertRegex(response.headers.get("X-Request-ID", ""), r"^[0-9a-f]{12}$")
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["service"], "ppmi-rapid-subtype-prediction-demo")
         self.assertEqual(response.json()["feature_count"], 12)
@@ -65,6 +67,23 @@ class ApiTests(unittest.TestCase):
         response = self.client.post("/predict", json=incomplete_patient)
 
         self.assertEqual(response.status_code, 422)
+        payload = response.json()
+        self.assertIn("error", payload)
+        self.assertEqual(payload.get("error", {}).get("code"), "invalid_input")
+        self.assertRegex(payload.get("request_id", ""), r"^[0-9a-f]{12}$")
+
+    def test_explain_reports_a_missing_key_with_a_safe_error_code(self):
+        def missing_key_explainer(prediction):
+            raise DeepSeekConfigurationError("DEEPSEEK_API_KEY is not configured.")
+
+        client = TestClient(create_app(self.artifact_path, missing_key_explainer))
+        response = client.post("/explain", json=self.valid_patient)
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertIn("error", payload)
+        self.assertEqual(payload.get("error", {}).get("code"), "deepseek_not_configured")
+        self.assertRegex(payload.get("request_id", ""), r"^[0-9a-f]{12}$")
 
     def test_explain_combines_existing_prediction_with_an_injected_llm_explanation(self):
         received_prediction = {}
