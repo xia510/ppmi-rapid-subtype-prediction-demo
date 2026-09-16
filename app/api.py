@@ -1,10 +1,10 @@
 """FastAPI endpoints for the PPMI Rapid-subtype prediction demonstration."""
 
 import logging
-from pathlib import Path
 import time
 from typing import Callable, Optional
 import uuid
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -17,10 +17,9 @@ from app.deepseek import (
     request_interpretation,
 )
 from app.predictor import InputValidationError, predict_from_patient
+from app.settings import model_artifact_path
 
 
-PROJECT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_ARTIFACT_PATH = PROJECT_DIR / "artifacts" / "model_bundle.joblib"
 LOGGER = logging.getLogger("ppmi.api")
 
 
@@ -88,7 +87,7 @@ def create_app(
     explainer: Optional[Callable[[dict], dict]] = None,
 ) -> FastAPI:
     """Create the API app, optionally using a test-specific model artifact."""
-    resolved_artifact_path = Path(artifact_path or DEFAULT_ARTIFACT_PATH)
+    resolved_artifact_path = Path(artifact_path or model_artifact_path())
     resolved_explainer = explainer or request_interpretation
     api = FastAPI(
         title="PPMI Rapid Subtype Prediction Demo",

@@ -104,6 +104,18 @@ python -m uvicorn app.api:app --reload
 
 DeepSeek 会被要求返回 JSON；本地 API 会校验“概率与阈值、特征贡献、科研使用说明”这三项非空文本后，才把结果返回给网页。
 
+### 配置变量
+
+`.env.example` 是可提交的变量名称模板，不含真实密钥，也不会被程序自动读取。真实 `.env` 已被 Git 忽略；当前项目继续使用启动终端中的 PowerShell 环境变量。
+
+```powershell
+$env:PPMI_MODEL_ARTIFACT = "C:\\path\\to\\model_bundle.joblib"  # 可选
+$env:PPMI_API_BASE_URL = "http://127.0.0.1:8000"                    # 可选
+$env:DEEPSEEK_API_KEY = "你的密钥"                                  # 仅需 DeepSeek 解读时设置
+```
+
+未设置时，模型文件默认是 `artifacts/model_bundle.joblib`，网页默认连接 `http://127.0.0.1:8000`。
+
 ### 排错与请求编号
 
 FastAPI 会在启动它的终端输出每次请求的安全日志：请求编号、路径、状态码和耗时；不会记录 API Key、Patient ID 或 12 项原始特征。网页出现错误时会显示“请求编号”。排查问题时只需提供该编号，不要发送密钥或原始受试者数据。

@@ -8,10 +8,11 @@ import pandas as pd
 import requests
 import streamlit as st
 
+from app.settings import api_base_url
+
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 SAMPLE_PATH = PROJECT_DIR / "examples" / "sample_patient.json"
-API_BASE_URL = "http://127.0.0.1:8000"
 
 FEATURE_NAMES: list[str] = [
     "scopa",
@@ -74,7 +75,7 @@ def format_api_error(status_code: int, detail: Any) -> str:
 def health_status() -> tuple[bool, Any]:
     """Query FastAPI health without making a failed local service crash the page."""
     try:
-        response = requests.get(f"{API_BASE_URL}/health", timeout=3)
+        response = requests.get(f"{api_base_url()}/health", timeout=3)
         response.raise_for_status()
         return True, response.json()
     except requests.RequestException as error:
@@ -85,7 +86,7 @@ def request_prediction(payload: dict) -> tuple[Optional[dict], Optional[str]]:
     """Send a validated page payload to FastAPI and return result or readable error."""
     try:
         response = requests.post(
-            f"{API_BASE_URL}/predict",
+            f"{api_base_url()}/predict",
             json=payload,
             timeout=10,
         )
@@ -106,7 +107,7 @@ def request_explanation(payload: dict) -> tuple[Optional[dict], Optional[str]]:
     """Ask the backend to predict locally and request a de-identified DeepSeek explanation."""
     try:
         response = requests.post(
-            f"{API_BASE_URL}/explain",
+            f"{api_base_url()}/explain",
             json=payload,
             timeout=40,
         )
