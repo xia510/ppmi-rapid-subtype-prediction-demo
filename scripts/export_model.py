@@ -1,5 +1,6 @@
 """Export a raw-input prediction bundle from the existing PPMI research outputs."""
 
+import argparse
 from pathlib import Path
 
 import joblib
@@ -77,8 +78,29 @@ def export_model_bundle(source_root: Path, artifact_path: Path) -> None:
     joblib.dump(bundle, artifact_path)
 
 
-if __name__ == "__main__":
-    default_source = Path(r"C:\Users\20284\Documents\trae_projects\code_xuexi_001")
+def main() -> None:
+    """Parse portable source and destination paths, then export the model bundle."""
     default_artifact = Path(__file__).resolve().parents[1] / "artifacts" / "model_bundle.joblib"
-    export_model_bundle(default_source, default_artifact)
-    print(f"Model bundle saved to: {default_artifact}")
+    parser = argparse.ArgumentParser(
+        description="Export the research prediction bundle from authorized training CSV files."
+    )
+    parser.add_argument(
+        "--source-root",
+        type=Path,
+        required=True,
+        help="Directory containing PPMI_4_LASSO_train_raw.csv and PPMI_4_LASSO_train_1se.csv",
+    )
+    parser.add_argument(
+        "--artifact",
+        type=Path,
+        default=default_artifact,
+        help="Destination path for model_bundle.joblib",
+    )
+    args = parser.parse_args()
+
+    export_model_bundle(args.source_root, args.artifact)
+    print(f"Model bundle saved to: {args.artifact}")
+
+
+if __name__ == "__main__":
+    main()
