@@ -13,11 +13,13 @@ sys.path.insert(0, str(PROJECT_DIR))
 from app.api import app, create_app
 from app.deepseek import DeepSeekConfigurationError
 from scripts.export_model import export_model_bundle
+from tests.data_support import authorized_source_root
 
 
-SOURCE_ROOT = Path(r"C:\Users\20284\Documents\trae_projects\code_xuexi_001")
+SOURCE_ROOT = authorized_source_root()
 
 
+@unittest.skipUnless(SOURCE_ROOT, "Set PPMI_TEST_SOURCE_ROOT for API model tests.")
 class ApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

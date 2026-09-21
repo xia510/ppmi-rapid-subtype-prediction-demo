@@ -14,11 +14,13 @@ sys.path.insert(0, str(PROJECT_DIR))
 
 from app.predictor import InputValidationError, predict_from_json, predict_from_patient
 from scripts.export_model import export_model_bundle
+from tests.data_support import authorized_source_root
 
 
-SOURCE_ROOT = Path(r"C:\Users\20284\Documents\trae_projects\code_xuexi_001")
+SOURCE_ROOT = authorized_source_root()
 
 
+@unittest.skipUnless(SOURCE_ROOT, "Set PPMI_TEST_SOURCE_ROOT for prediction model tests.")
 class PredictorTests(unittest.TestCase):
     def _patient_payload(self, remove_field: Optional[str] = None) -> dict:
         raw_train = pd.read_csv(SOURCE_ROOT / "PPMI_4_LASSO_train_raw.csv")
