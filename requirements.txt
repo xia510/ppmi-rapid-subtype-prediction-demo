@@ -6,3 +6,6 @@ uvicorn[standard]
 httpx
 requests
 streamlit
+numpy
+PyMuPDF==1.24.14
+sentence-transformers==3.4.1
