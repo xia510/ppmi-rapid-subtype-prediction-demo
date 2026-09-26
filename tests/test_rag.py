@@ -9,6 +9,7 @@ from app.rag import (
     EmptyCorpusError,
     IndexDimensionError,
     LiteratureIndex,
+    LiteratureRAG,
     build_literature_index_from_pages,
     split_pages,
 )
@@ -136,6 +137,52 @@ class LiteratureIndexTests(unittest.TestCase):
     def test_split_pages_rejects_overlap_that_cannot_advance(self):
         with self.assertRaises(ValueError):
             split_pages([], chunk_size=100, overlap=100)
+
+    def test_literature_rag_maps_validated_source_ids_to_citations(self):
+        pages = [
+            {
+                "document_id": "paper-a",
+                "title": "Autonomic Study",
+                "source": "autonomic.pdf",
+                "page": 2,
+                "text": "SCOPA autonomic symptoms and Parkinson progression.",
+            },
+            {
+                "document_id": "paper-b",
+                "title": "Cognition Study",
+                "source": "cognition.pdf",
+                "page": 4,
+                "text": "MoCA cognition scores and Parkinson progression.",
+            },
+        ]
+        captured = {}
+
+        def fake_answerer(question, evidence):
+            captured["question"] = question
+            captured["evidence"] = evidence
+            return {
+                "answer": "自主神经症状与群体层面的纵向结局有关。",
+                "cited_source_ids": [evidence[0]["source_id"]],
+                "evidence_limitations": "不能推断个体因果关系。",
+                "provider": "DeepSeek",
+                "model": "test-model",
+            }
+
+        with tempfile.TemporaryDirectory() as directory:
+            index_dir = Path(directory)
+            build_literature_index_from_pages(pages, index_dir, KeywordEmbedder())
+            service = LiteratureRAG(
+                LiteratureIndex.load(index_dir, KeywordEmbedder()),
+                answerer=fake_answerer,
+            )
+
+            result = service.ask("autonomic progression", top_k=2)
+
+        self.assertEqual(captured["question"], "autonomic progression")
+        self.assertEqual(captured["evidence"][0]["title"], "Autonomic Study")
+        self.assertEqual(result["citations"][0]["page"], 2)
+        self.assertEqual(result["citations"][0]["title"], "Autonomic Study")
+        self.assertIn("科研", result["disclaimer"])
 
 
 if __name__ == "__main__":

@@ -9,6 +9,8 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from app.deepseek import request_grounded_answer
+
 
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"
 INDEX_METADATA_NAME = "metadata.json"
@@ -235,3 +237,42 @@ class LiteratureIndex:
             {**self.chunks[int(position)], "score": float(scores[int(position)])}
             for position in positions
         ]
+
+
+class LiteratureRAG:
+    """Retrieve local evidence and turn a validated source list into an answer."""
+
+    def __init__(self, index: LiteratureIndex, answerer=None):
+        self.index = index
+        self.answerer = answerer or request_grounded_answer
+
+    def ask(self, question: str, top_k: int = 5) -> dict[str, Any]:
+        evidence = self.index.search(question, top_k=top_k)
+        if not evidence:
+            raise EmptyCorpusError("No literature evidence was retrieved for the question.")
+        grounded = self.answerer(str(question).strip(), evidence)
+
+        evidence_by_id = {row["source_id"]: row for row in evidence}
+        cited_source_ids = list(dict.fromkeys(grounded["cited_source_ids"]))
+        if any(source_id not in evidence_by_id for source_id in cited_source_ids):
+            raise RAGError("The answer cited evidence that was not retrieved locally.")
+        citations = [
+            {
+                "source_id": source_id,
+                "title": evidence_by_id[source_id]["title"],
+                "source": evidence_by_id[source_id]["source"],
+                "page": evidence_by_id[source_id]["page"],
+                "text": evidence_by_id[source_id]["text"],
+                "score": evidence_by_id[source_id]["score"],
+            }
+            for source_id in cited_source_ids
+        ]
+        return {
+            "question": str(question).strip(),
+            "answer": grounded["answer"],
+            "evidence_limitations": grounded["evidence_limitations"],
+            "citations": citations,
+            "provider": grounded.get("provider", "unknown"),
+            "model": grounded.get("model", "unknown"),
+            "disclaimer": "仅供科研文献辅助阅读，不构成临床诊断、治疗或个体医疗建议。",
+        }

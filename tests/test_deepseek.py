@@ -9,7 +9,9 @@ sys.path.insert(0, str(PROJECT_DIR))
 
 from app.deepseek import (
     DeepSeekRequestError,
+    build_grounded_answer_request,
     build_interpretation_request,
+    request_grounded_answer,
     request_interpretation,
 )
 
@@ -28,6 +30,17 @@ PREDICTION = {
     ],
     "disclaimer": "Research demonstration only. Not for clinical diagnosis.",
 }
+
+EVIDENCE = [
+    {
+        "source_id": "paper-a-p2-c1",
+        "title": "Autonomic dysfunction in Parkinson disease",
+        "source": "autonomic.pdf",
+        "page": 2,
+        "text": "Autonomic symptoms were associated with longitudinal outcomes.",
+        "score": 0.91,
+    }
+]
 
 
 class FakeResponse:
@@ -75,6 +88,34 @@ class ExtraFieldJsonResponse(FakeResponse):
             ensure_ascii=False,
         )
         return response
+
+
+class GroundedAnswerResponse(FakeResponse):
+    cited_source_id = "paper-a-p2-c1"
+
+    def json(self):
+        return {
+            "id": "chatcmpl-rag-demo",
+            "model": "deepseek-flash",
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "answer": "检索证据提示自主神经症状与纵向结局存在群体层面关联。",
+                                "cited_source_ids": [self.cited_source_id],
+                                "evidence_limitations": "该证据不能证明个体因果关系。",
+                            },
+                            ensure_ascii=False,
+                        )
+                    }
+                }
+            ],
+        }
+
+
+class UnknownCitationResponse(GroundedAnswerResponse):
+    cited_source_id = "unknown-source"
 
 
 class DeepSeekExplanationTests(unittest.TestCase):
@@ -133,6 +174,39 @@ class DeepSeekExplanationTests(unittest.TestCase):
                 PREDICTION,
                 api_key="test-key",
                 http_post=extra_field_post,
+            )
+
+    def test_grounded_request_contains_numbered_evidence_and_research_boundaries(self):
+        request = build_grounded_answer_request(
+            "自主神经症状是否与帕金森病进展有关？",
+            EVIDENCE,
+        )
+        serialized_messages = json.dumps(request["messages"], ensure_ascii=False)
+
+        self.assertIn("paper-a-p2-c1", serialized_messages)
+        self.assertIn("Autonomic symptoms", serialized_messages)
+        self.assertIn("只能依据", serialized_messages)
+        self.assertIn("群体研究", serialized_messages)
+        self.assertNotIn("patient_id", serialized_messages)
+
+    def test_request_grounded_answer_accepts_only_retrieved_source_ids(self):
+        result = request_grounded_answer(
+            "自主神经症状是否与帕金森病进展有关？",
+            EVIDENCE,
+            api_key="test-key",
+            http_post=lambda url, **kwargs: GroundedAnswerResponse(),
+        )
+
+        self.assertEqual(result["cited_source_ids"], ["paper-a-p2-c1"])
+        self.assertIn("个体因果", result["evidence_limitations"])
+
+    def test_request_grounded_answer_rejects_unknown_source_id(self):
+        with self.assertRaises(DeepSeekRequestError):
+            request_grounded_answer(
+                "自主神经症状是否与帕金森病进展有关？",
+                EVIDENCE,
+                api_key="test-key",
+                http_post=lambda url, **kwargs: UnknownCitationResponse(),
             )
 
 
