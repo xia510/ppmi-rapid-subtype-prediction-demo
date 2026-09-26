@@ -115,5 +115,70 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn("patient_id", received_prediction)
 
 
+class LiteratureApiTests(unittest.TestCase):
+    def test_literature_ask_returns_grounded_answer_without_model_artifact(self):
+        class FakeLiteratureService:
+            def ask(self, question, top_k=5):
+                return {
+                    "question": question,
+                    "answer": "检索证据支持群体层面的相关性描述。",
+                    "evidence_limitations": "不能推断个体因果关系。",
+                    "citations": [
+                        {
+                            "source_id": "paper-a-p2-c1",
+                            "title": "Autonomic Study",
+                            "source": "autonomic.pdf",
+                            "page": 2,
+                            "text": "Evidence text.",
+                            "score": 0.9,
+                        }
+                    ],
+                    "provider": "DeepSeek",
+                    "model": "test-model",
+                    "disclaimer": "仅供科研文献辅助阅读。",
+                }
+
+        client = TestClient(
+            create_app(
+                Path("missing-model.joblib"),
+                literature_service=FakeLiteratureService(),
+            )
+        )
+        response = client.post(
+            "/literature/ask",
+            json={"question": "自主神经症状是否与进展有关？", "top_k": 3},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["citations"][0]["page"], 2)
+        self.assertRegex(response.headers.get("X-Request-ID", ""), r"^[0-9a-f]{12}$")
+
+    def test_literature_ask_reports_missing_local_index(self):
+        with tempfile.TemporaryDirectory() as directory:
+            client = TestClient(
+                create_app(
+                    Path("missing-model.joblib"),
+                    literature_index_path=Path(directory),
+                )
+            )
+            response = client.post(
+                "/literature/ask",
+                json={"question": "What evidence is available?", "top_k": 3},
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "literature_index_unavailable")
+
+    def test_literature_ask_rejects_empty_question_with_specific_error(self):
+        client = TestClient(create_app(Path("missing-model.joblib")))
+        response = client.post(
+            "/literature/ask",
+            json={"question": "   ", "top_k": 3},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["error"]["code"], "invalid_literature_question")
+
+
 if __name__ == "__main__":
     unittest.main()

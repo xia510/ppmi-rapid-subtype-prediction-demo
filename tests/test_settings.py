@@ -36,6 +36,26 @@ class SettingsTests(unittest.TestCase):
         self.assertIn("DEEPSEEK_API_KEY=", text)
         self.assertNotIn("sk-", text)
 
+    def test_literature_index_path_uses_project_default_when_unset(self):
+        from app.settings import literature_index_path
+
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(
+                literature_index_path(),
+                PROJECT_DIR / "knowledge_base" / "index",
+            )
+
+    def test_literature_index_path_uses_environment_override(self):
+        from app.settings import literature_index_path
+
+        configured = PROJECT_DIR / "custom-literature-index"
+        with patch.dict(
+            os.environ,
+            {"PPMI_LITERATURE_INDEX": str(configured)},
+            clear=True,
+        ):
+            self.assertEqual(literature_index_path(), configured)
+
 
 if __name__ == "__main__":
     unittest.main()

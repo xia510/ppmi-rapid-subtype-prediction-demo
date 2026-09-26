@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, constr
 
 from app.deepseek import (
     DeepSeekConfigurationError,
@@ -17,7 +17,16 @@ from app.deepseek import (
     request_interpretation,
 )
 from app.predictor import InputValidationError, predict_from_patient
-from app.settings import model_artifact_path
+from app.rag import (
+    LiteratureIndex,
+    LiteratureIndexNotFoundError,
+    LiteratureRAG,
+    RAGError,
+)
+from app.settings import (
+    literature_index_path as configured_literature_index_path,
+    model_artifact_path,
+)
 
 
 # 创建本模块专用的日志记录器，用于记录请求编号、接口路径、状态码和耗时。
@@ -42,6 +51,13 @@ class PatientRequest(BaseModel):
     DVT_SDM: float
     upsit_pctl: float
     quip: float
+
+
+class LiteratureQuestionRequest(BaseModel):
+    """Define a bounded research-literature question."""
+
+    question: constr(strip_whitespace=True, min_length=2, max_length=500)
+    top_k: int = Field(default=5, ge=1, le=10)
 
 
 def _prediction_for_external_explanation(prediction: dict) -> dict:
@@ -90,12 +106,18 @@ def _error_response(
 def create_app(
     artifact_path: Optional[Path] = None,
     explainer: Optional[Callable[[dict], dict]] = None,
+    literature_service: Optional[object] = None,
+    literature_index_path: Optional[Path] = None,
 ) -> FastAPI:
     """创建 API 应用，并允许测试注入临时模型路径和假解释器。"""
     # 正常运行时从 settings.py 读取模型位置；测试时可以传入临时模型文件。
     resolved_artifact_path = Path(artifact_path or model_artifact_path())
     # 正常运行时调用 DeepSeek；测试时可注入假函数，避免真实联网和消耗余额。
     resolved_explainer = explainer or request_interpretation
+    resolved_literature_index_path = Path(
+        literature_index_path or configured_literature_index_path()
+    )
+    literature_service_holder = {"service": literature_service}
     api = FastAPI(
         title="PPMI Rapid Subtype Prediction Demo",
         description="Research demonstration API. Not for clinical diagnosis.",
@@ -127,11 +149,16 @@ def create_app(
     async def request_validation_error(request: Request, exc: RequestValidationError):
         """将 Pydantic/FastAPI 输入校验错误转换为统一的 422 响应。"""
         # 不直接返回复杂的框架异常，网页只依赖稳定的 invalid_input 错误码。
+        is_literature_request = request.url.path == "/literature/ask"
         return _error_response(
             request,
             status_code=422,
-            code="invalid_input",
-            message="Input is incomplete or has an invalid numeric value.",
+            code=("invalid_literature_question" if is_literature_request else "invalid_input"),
+            message=(
+                "Literature question or top_k is invalid."
+                if is_literature_request
+                else "Input is incomplete or has an invalid numeric value."
+            ),
         )
 
     @api.get("/health")
@@ -142,7 +169,53 @@ def create_app(
             "service": "ppmi-rapid-subtype-prediction-demo",
             "feature_count": 12,
             "model_artifact_available": resolved_artifact_path.exists(),
+            "literature_index_available": (
+                (resolved_literature_index_path / "metadata.json").exists()
+                and (resolved_literature_index_path / "embeddings.npy").exists()
+            ),
         }
+
+    def resolve_literature_service():
+        service = literature_service_holder["service"]
+        if service is None:
+            service = LiteratureRAG(LiteratureIndex.load(resolved_literature_index_path))
+            literature_service_holder["service"] = service
+        return service
+
+    @api.post("/literature/ask")
+    def ask_literature(payload: LiteratureQuestionRequest, request: Request) -> object:
+        """Retrieve local PDF evidence and request a citation-checked DeepSeek answer."""
+        try:
+            service = resolve_literature_service()
+            return service.ask(payload.question, top_k=payload.top_k)
+        except LiteratureIndexNotFoundError:
+            return _error_response(
+                request,
+                status_code=503,
+                code="literature_index_unavailable",
+                message="Local literature index is unavailable.",
+            )
+        except DeepSeekConfigurationError:
+            return _error_response(
+                request,
+                status_code=503,
+                code="deepseek_not_configured",
+                message="DeepSeek API key is not configured.",
+            )
+        except DeepSeekRequestError:
+            return _error_response(
+                request,
+                status_code=502,
+                code="literature_answer_unavailable",
+                message="DeepSeek could not return a grounded literature answer.",
+            )
+        except (RAGError, ValueError):
+            return _error_response(
+                request,
+                status_code=503,
+                code="literature_rag_unavailable",
+                message="The local literature RAG service is unavailable.",
+            )
 
     @api.post("/predict")
     def predict(patient: PatientRequest, request: Request) -> object:

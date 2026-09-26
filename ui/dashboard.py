@@ -49,6 +49,12 @@ def format_api_error(status_code: int, detail: Any) -> str:
                 "后端尚未配置 DEEPSEEK_API_KEY，请在启动 FastAPI 的终端设置该环境变量后重启服务。"
             ),
             "deepseek_unavailable": "DeepSeek 暂时未能返回可用的科研辅助解读，请稍后重试。",
+            "literature_index_unavailable": (
+                "后端尚未建立本地文献索引，请先运行 scripts/build_literature_index.py。"
+            ),
+            "literature_answer_unavailable": "DeepSeek 暂时未能返回有文献依据的回答，请稍后重试。",
+            "literature_rag_unavailable": "本地文献检索暂时不可用，请检查索引和Embedding模型。",
+            "invalid_literature_question": "文献问题不能为空，Top-K 必须在 1 到 10 之间。",
         }
         message = messages.get(error_code, "后端发生了未分类错误，请稍后重试。")
         request_id = detail.get("request_id")
@@ -117,6 +123,29 @@ def request_explanation(payload: dict) -> tuple[Optional[dict], Optional[str]]:
     if response.ok:
         return response.json(), None
 
+    try:
+        detail = response.json()
+    except ValueError:
+        detail = response.text
+    return None, format_api_error(response.status_code, detail)
+
+
+def request_literature_answer(
+    question: str,
+    top_k: int = 5,
+) -> tuple[Optional[dict], Optional[str]]:
+    """Ask the FastAPI backend to retrieve local literature and answer from evidence."""
+    try:
+        response = requests.post(
+            f"{api_base_url()}/literature/ask",
+            json={"question": question, "top_k": int(top_k)},
+            timeout=60,
+        )
+    except requests.RequestException:
+        return None, "无法连接预测后端。请确认 FastAPI 服务正在 127.0.0.1:8000 运行。"
+
+    if response.ok:
+        return response.json(), None
     try:
         detail = response.json()
     except ValueError:
@@ -293,6 +322,51 @@ def main() -> None:
                 f"提供方：{interpretation['provider']} · 模型：{interpretation['model']}"
             )
             st.warning(interpretation["disclaimer"])
+
+    st.divider()
+    st.subheader("帕金森病医学文献助手")
+    st.caption(
+        "问题会先检索本地开放文献索引，再把问题与相关证据片段发送给 DeepSeek。"
+        "回答是群体研究背景，不是对个体患者的诊断或因果判断。"
+    )
+    question = st.text_area(
+        "文献问题",
+        placeholder="例如：自主神经功能异常与帕金森病进展有什么关系？",
+        key="literature_question",
+    )
+    top_k = st.slider("检索证据数量", min_value=1, max_value=10, value=5)
+    literature_consent = st.checkbox(
+        "我理解问题和检索到的公开文献片段会发送给 DeepSeek。",
+        key="literature_consent",
+    )
+    if st.button("检索文献并回答"):
+        if not question.strip():
+            st.warning("请先输入文献问题。")
+        elif not literature_consent:
+            st.warning("请先确认外部 API 调用说明。")
+        else:
+            with st.spinner("正在检索本地文献并生成有依据的回答..."):
+                literature_result, error = request_literature_answer(question, top_k)
+            if error:
+                st.error(error)
+            else:
+                st.session_state["literature_result"] = literature_result
+
+    if "literature_result" in st.session_state:
+        literature_result = st.session_state["literature_result"]
+        st.markdown("#### 回答")
+        st.info(literature_result["answer"])
+        st.markdown("#### 文献依据")
+        for citation in literature_result["citations"]:
+            label = "{title} · 第 {page} 页 · 相似度 {score:.3f}".format(**citation)
+            with st.expander(label):
+                st.write(citation["text"])
+                st.caption(f"本地文件：{citation['source']} · 来源编号：{citation['source_id']}")
+        st.warning(literature_result["evidence_limitations"])
+        st.caption(
+            f"提供方：{literature_result['provider']} · 模型：{literature_result['model']}"
+        )
+        st.warning(literature_result["disclaimer"])
 
 
 if __name__ == "__main__":
