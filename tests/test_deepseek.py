@@ -186,6 +186,7 @@ class DeepSeekExplanationTests(unittest.TestCase):
         self.assertIn("paper-a-p2-c1", serialized_messages)
         self.assertIn("Autonomic symptoms", serialized_messages)
         self.assertIn("只能依据", serialized_messages)
+        self.assertIn("不可信引用材料", serialized_messages)
         self.assertIn("群体研究", serialized_messages)
         self.assertNotIn("patient_id", serialized_messages)
 

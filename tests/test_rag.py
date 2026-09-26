@@ -1,7 +1,10 @@
 import json
 from pathlib import Path
+import sys
 import tempfile
+import types
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -10,6 +13,8 @@ from app.rag import (
     IndexDimensionError,
     LiteratureIndex,
     LiteratureRAG,
+    RAGError,
+    SentenceTransformerEmbedder,
     build_literature_index_from_pages,
     split_pages,
 )
@@ -37,6 +42,19 @@ class ThreeDimensionQueryEmbedder(KeywordEmbedder):
 
 
 class LiteratureIndexTests(unittest.TestCase):
+    def test_sentence_transformer_loading_failure_becomes_expected_rag_error(self):
+        class FailingSentenceTransformer:
+            def __init__(self, model_name):
+                raise OSError("cached model is unavailable")
+
+        fake_module = types.SimpleNamespace(
+            SentenceTransformer=FailingSentenceTransformer
+        )
+
+        with patch.dict(sys.modules, {"sentence_transformers": fake_module}):
+            with self.assertRaises(RAGError):
+                SentenceTransformerEmbedder().encode(["Parkinson disease"])
+
     def test_split_pages_preserves_page_metadata_and_overlap(self):
         pages = [
             {

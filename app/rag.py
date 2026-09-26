@@ -48,20 +48,20 @@ class SentenceTransformerEmbedder:
         self._model = None
 
     def encode(self, texts: list[str]) -> np.ndarray:
-        if self._model is None:
-            try:
+        try:
+            if self._model is None:
                 from sentence_transformers import SentenceTransformer
-            except ImportError as error:
-                raise RAGError(
-                    "sentence-transformers is required to build or query the literature index."
-                ) from error
-            self._model = SentenceTransformer(self.model_name)
-        vectors = self._model.encode(
-            texts,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-            show_progress_bar=False,
-        )
+                self._model = SentenceTransformer(self.model_name)
+            vectors = self._model.encode(
+                texts,
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+        except Exception as error:
+            raise RAGError(
+                "The local sentence-transformer embedding model could not be loaded or run."
+            ) from error
         return np.asarray(vectors, dtype=np.float32)
 
 
