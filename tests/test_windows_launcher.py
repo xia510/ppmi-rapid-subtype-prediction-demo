@@ -14,6 +14,12 @@ STOP_SCRIPT = PROJECT_DIR / "scripts" / "stop_demo.ps1"
 
 @unittest.skipUnless(os.name == "nt", "Windows PowerShell launcher test")
 class WindowsLauncherTests(unittest.TestCase):
+    def test_api_key_prompt_uses_visible_text_input(self):
+        script_text = START_SCRIPT.read_text(encoding="utf-8-sig")
+
+        self.assertIn("Read-ApiKeyText", script_text)
+        self.assertNotIn("-AsSecureString", script_text)
+
     def run_validation(self, env_text: str):
         with tempfile.TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"

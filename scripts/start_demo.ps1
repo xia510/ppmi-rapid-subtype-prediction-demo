@@ -69,17 +69,12 @@ function Set-DotEnvValue {
     Set-Content -LiteralPath $Path -Value $lines -Encoding UTF8
 }
 
-function Read-SecretText {
+function Read-ApiKeyText {
     param([string]$Prompt)
 
-    $secure = Read-Host $Prompt -AsSecureString
-    $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-    try {
-        return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
-    }
-    finally {
-        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
-    }
+    # This local learning demo intentionally keeps the prompt visible so that
+    # paste operations work consistently in older Windows console windows.
+    return Read-Host $Prompt
 }
 
 function Test-DeepSeekApiKeyFormat {
@@ -164,7 +159,7 @@ try {
         if ($NonInteractive) {
             throw "DEEPSEEK_API_KEY must be a valid sk- key in .env."
         }
-        $apiKey = Read-SecretText -Prompt "Enter your DeepSeek API key"
+        $apiKey = Read-ApiKeyText -Prompt "Enter your DeepSeek API key"
         if (-not (Test-DeepSeekApiKeyFormat -Value $apiKey)) {
             throw "The DeepSeek API key must be a valid sk- key."
         }
