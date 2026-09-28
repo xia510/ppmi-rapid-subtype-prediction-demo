@@ -202,7 +202,14 @@ def create_app(
                 code="deepseek_not_configured",
                 message="DeepSeek API key is not configured.",
             )
-        except DeepSeekRequestError:
+        except DeepSeekRequestError as error:
+            # 仅在服务端记录经过代码控制的失败原因，便于用请求编号排查；
+            # 不记录 API Key、完整提示词、文献正文或 DeepSeek 原始响应。
+            LOGGER.warning(
+                "literature_answer_failure request_id=%s reason=%s",
+                _request_id(request),
+                error,
+            )
             return _error_response(
                 request,
                 status_code=502,

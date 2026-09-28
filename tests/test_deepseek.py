@@ -3,6 +3,8 @@ from pathlib import Path
 import sys
 import unittest
 
+import requests
+
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_DIR))
@@ -118,6 +120,36 @@ class UnknownCitationResponse(GroundedAnswerResponse):
     cited_source_id = "unknown-source"
 
 
+class EmptyGroundedAnswerResponse(GroundedAnswerResponse):
+    def json(self):
+        response = super().json()
+        response["choices"][0]["message"]["content"] = "   "
+        return response
+
+
+class InvalidJsonGroundedAnswerResponse(GroundedAnswerResponse):
+    def json(self):
+        response = super().json()
+        response["choices"][0]["message"]["content"] = "not-json"
+        return response
+
+
+class InvalidSchemaGroundedAnswerResponse(GroundedAnswerResponse):
+    def json(self):
+        response = super().json()
+        response["choices"][0]["message"]["content"] = json.dumps(
+            {"answer": "缺少引用字段。"}, ensure_ascii=False
+        )
+        return response
+
+
+class HttpErrorGroundedAnswerResponse(GroundedAnswerResponse):
+    status_code = 402
+
+    def raise_for_status(self):
+        raise requests.HTTPError(response=self)
+
+
 class DeepSeekExplanationTests(unittest.TestCase):
     def test_request_payload_excludes_patient_identifier_and_raw_features(self):
         request = build_interpretation_request(PREDICTION)
@@ -209,6 +241,24 @@ class DeepSeekExplanationTests(unittest.TestCase):
                 api_key="test-key",
                 http_post=lambda url, **kwargs: UnknownCitationResponse(),
             )
+
+    def test_request_grounded_answer_reports_safe_parse_failure_category(self):
+        cases = [
+            (EmptyGroundedAnswerResponse(), "empty content"),
+            (InvalidJsonGroundedAnswerResponse(), "invalid JSON"),
+            (InvalidSchemaGroundedAnswerResponse(), "invalid response schema"),
+            (HttpErrorGroundedAnswerResponse(), "upstream HTTP 402"),
+        ]
+
+        for response, expected_reason in cases:
+            with self.subTest(expected_reason=expected_reason):
+                with self.assertRaisesRegex(DeepSeekRequestError, expected_reason):
+                    request_grounded_answer(
+                        "自主神经症状是否与帕金森病进展有关？",
+                        EVIDENCE,
+                        api_key="test-key",
+                        http_post=lambda url, **kwargs: response,
+                    )
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_DIR))
 
 from app.api import app, create_app
-from app.deepseek import DeepSeekConfigurationError
+from app.deepseek import DeepSeekConfigurationError, DeepSeekRequestError
 from scripts.export_model import export_model_bundle
 from tests.data_support import authorized_source_root
 
@@ -116,6 +116,27 @@ class ApiTests(unittest.TestCase):
 
 
 class LiteratureApiTests(unittest.TestCase):
+    def test_literature_ask_logs_safe_upstream_failure_reason(self):
+        class FailingLiteratureService:
+            def ask(self, question, top_k=5):
+                raise DeepSeekRequestError("DeepSeek returned empty content.")
+
+        client = TestClient(
+            create_app(
+                Path("missing-model.joblib"),
+                literature_service=FailingLiteratureService(),
+            )
+        )
+
+        with self.assertLogs("ppmi.api", level="WARNING") as captured:
+            response = client.post(
+                "/literature/ask",
+                json={"question": "自主神经症状是否与进展有关？", "top_k": 3},
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("DeepSeek returned empty content.", "\n".join(captured.output))
+
     def test_literature_ask_returns_grounded_answer_without_model_artifact(self):
         class FakeLiteratureService:
             def ask(self, question, top_k=5):

@@ -230,20 +230,33 @@ def request_grounded_answer(
             timeout=40,
         )
         response.raise_for_status()
+    except requests.RequestException as error:
+        status_code = getattr(getattr(error, "response", None), "status_code", None)
+        reason = (
+            "upstream HTTP {status}".format(status=status_code)
+            if status_code is not None
+            else "upstream network error"
+        )
+        raise DeepSeekRequestError("DeepSeek {reason}.".format(reason=reason)) from error
+
+    try:
         response_data = response.json()
         text = response_data["choices"][0]["message"]["content"].strip()
-        structured = GroundedLiteratureAnswer.model_validate(json.loads(text))
-    except (
-        requests.RequestException,
-        KeyError,
-        IndexError,
-        TypeError,
-        ValueError,
-        ValidationError,
-    ) as error:
-        raise DeepSeekRequestError(
-            "DeepSeek did not return a usable grounded literature answer."
-        ) from error
+    except (KeyError, IndexError, TypeError, ValueError) as error:
+        raise DeepSeekRequestError("DeepSeek returned an invalid response envelope.") from error
+
+    if not text:
+        raise DeepSeekRequestError("DeepSeek returned empty content.")
+
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError) as error:
+        raise DeepSeekRequestError("DeepSeek returned invalid JSON content.") from error
+
+    try:
+        structured = GroundedLiteratureAnswer.model_validate(parsed)
+    except ValidationError as error:
+        raise DeepSeekRequestError("DeepSeek returned an invalid response schema.") from error
 
     allowed_source_ids = {str(row["source_id"]) for row in evidence}
     cited_source_ids = list(dict.fromkeys(structured.cited_source_ids))
