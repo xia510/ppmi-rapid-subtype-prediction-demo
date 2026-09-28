@@ -82,6 +82,11 @@ function Read-SecretText {
     }
 }
 
+function Test-DeepSeekApiKeyFormat {
+    param([string]$Value)
+    return [bool]($Value -match '^sk-[A-Za-z0-9_-]{20,}$')
+}
+
 function Resolve-PythonExecutable {
     param([hashtable]$Configuration)
 
@@ -155,13 +160,13 @@ try {
     }
 
     $configuration = Read-DotEnv -Path $EnvFile
-    if (-not $configuration["DEEPSEEK_API_KEY"]) {
+    if (-not (Test-DeepSeekApiKeyFormat -Value $configuration["DEEPSEEK_API_KEY"])) {
         if ($NonInteractive) {
-            throw "DEEPSEEK_API_KEY is empty in .env."
+            throw "DEEPSEEK_API_KEY must be a valid sk- key in .env."
         }
         $apiKey = Read-SecretText -Prompt "Enter your DeepSeek API key"
-        if (-not $apiKey -or $apiKey -match "\s") {
-            throw "The DeepSeek API key is empty or contains whitespace."
+        if (-not (Test-DeepSeekApiKeyFormat -Value $apiKey)) {
+            throw "The DeepSeek API key must be a valid sk- key."
         }
         Set-DotEnvValue -Path $EnvFile -Name "DEEPSEEK_API_KEY" -Value $apiKey
         $configuration["DEEPSEEK_API_KEY"] = $apiKey

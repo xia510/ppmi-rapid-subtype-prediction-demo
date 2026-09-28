@@ -60,11 +60,19 @@ class WindowsLauncherTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("DEEPSEEK_API_KEY", result.stdout + result.stderr)
 
+    def test_validation_rejects_nonempty_malformed_key(self):
+        result = self.run_validation(
+            "DEEPSEEK_API_KEY=x\nPYTHON_EXE={python}\n".format(python=sys.executable)
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("DEEPSEEK_API_KEY", result.stdout + result.stderr)
+
     def test_env_file_is_parsed_as_data_not_executed_as_powershell(self):
         with tempfile.TemporaryDirectory() as directory:
             marker = Path(directory) / "must-not-exist.txt"
             result = self.run_validation(
-                "DEEPSEEK_API_KEY=sk-test-safe\n"
+                "DEEPSEEK_API_KEY=sk-test-safe-123456789012345\n"
                 "PYTHON_EXE={python}\n"
                 "UNTRUSTED=$(Set-Content -LiteralPath '{marker}' -Value hacked)\n".format(
                     python=sys.executable,
@@ -79,7 +87,7 @@ class WindowsLauncherTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"
             env_path.write_text(
-                "DEEPSEEK_API_KEY=sk-test-launcher\n"
+                "DEEPSEEK_API_KEY=sk-test-launcher-123456789012345\n"
                 "HF_HUB_OFFLINE=1\n"
                 "PYTHON_EXE={python}\n".format(python=sys.executable),
                 encoding="utf-8",
