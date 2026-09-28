@@ -101,6 +101,24 @@ outputs/             本地预测结果，不提交 Git
 
 ## 快速启动
 
+### Windows 一键启动（推荐）
+
+在项目根目录双击 `start_demo.bat`。首次运行时会在终端中提示输入 DeepSeek API Key，并保存到本机 `.env`；之后再次双击即可直接启动 FastAPI 和 Streamlit，并自动打开网页。
+
+停止服务时双击 `stop_demo.bat`。本机 `.runtime\` 只保存一键停止所需的进程记录；`.env` 和运行记录均已被 Git 忽略，不会上传 GitHub。
+
+也可以在 PowerShell 中运行：
+
+```powershell
+.\scripts\start_demo.ps1
+```
+
+```powershell
+.\scripts\stop_demo.ps1
+```
+
+如果 8000 或 8501 端口已被以前手工启动的服务占用，请先到对应终端按 `Ctrl+C`；一键停止脚本只会停止由一键启动脚本记录的进程，不会任意结束其他程序。
+
 ### 1. 克隆并安装依赖
 
 ```powershell

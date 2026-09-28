@@ -5,6 +5,7 @@ __pycache__/
 # 本地虚拟环境与密钥
 .venv/
 .env
+.runtime/
 
 # Git 独立开发工作区
 .worktrees/
