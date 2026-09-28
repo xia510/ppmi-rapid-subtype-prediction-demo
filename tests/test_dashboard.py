@@ -11,6 +11,7 @@ from ui.dashboard import (
     FEATURE_NAMES,
     build_patient_payload,
     format_api_error,
+    request_literature_answer,
     request_explanation,
 )
 import ui.dashboard as dashboard
@@ -93,6 +94,41 @@ class DashboardHelperTests(unittest.TestCase):
                 ("科研使用说明", "仅供科研演示。"),
             ],
         )
+
+    def test_request_literature_answer_posts_question_and_top_k(self):
+        response = Mock()
+        response.ok = True
+        response.json.return_value = {
+            "answer": "基于文献的回答。",
+            "evidence_limitations": "群体证据不能证明个体结局。",
+            "citations": [],
+        }
+
+        with patch("ui.dashboard.requests.post", return_value=response) as post:
+            result, error = request_literature_answer("什么是SCOPA-AUT？", top_k=4)
+
+        self.assertIsNone(error)
+        self.assertEqual(result["answer"], "基于文献的回答。")
+        self.assertTrue(post.call_args.args[0].endswith("/literature/ask"))
+        self.assertEqual(
+            post.call_args.kwargs["json"],
+            {"question": "什么是SCOPA-AUT？", "top_k": 4},
+        )
+
+    def test_format_api_error_explains_missing_literature_index(self):
+        message = format_api_error(
+            503,
+            {
+                "error": {
+                    "code": "literature_index_unavailable",
+                    "message": "Internal detail.",
+                },
+                "request_id": "abc123def456",
+            },
+        )
+
+        self.assertIn("文献索引", message)
+        self.assertIn("请求编号：abc123def456", message)
 
 
 if __name__ == "__main__":

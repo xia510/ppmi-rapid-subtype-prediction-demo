@@ -1,6 +1,6 @@
 # PPMI Rapid Subtype Prediction Demo
 
-一个将科研机器学习模型封装为可交互 AI 应用的端到端工程项目：本地 Logistic Regression 负责预测，FastAPI 提供服务，Streamlit 展示结果，DeepSeek 在用户明确同意后提供去标识化科研解读。
+一个将科研机器学习模型封装为可交互 AI 应用的端到端工程项目：本地 Logistic Regression 负责预测，FastAPI 提供服务，Streamlit 展示结果，DeepSeek 在用户明确同意后提供去标识化科研解读；本地医学文献 RAG 还可以从自建 PDF 知识库检索证据并生成带页码引用的回答。
 
 > 本项目仅用于科研复现与工程学习演示，不可用于临床诊断、治疗或医疗决策。
 
@@ -23,6 +23,7 @@
 - **隐私最小化**：外部 LLM 不接收 `patient_id` 或 12 项原始特征，只接收去标识化模型结果摘要。
 - **可观测性**：API 为每次请求生成 `request_id`，记录路径、状态码和耗时，不记录密钥或原始数据。
 - **可配置与可测试**：模型路径、API 地址和 DeepSeek 模型通过环境变量切换；完整测试覆盖预测、API、网页、LLM 边界和配置。
+- **回答有据可查**：RAG 只允许 DeepSeek 引用本次本地检索到的来源编号，网页同时显示文献名、页码、原文片段和相似度。
 
 ## 系统架构
 
@@ -43,6 +44,13 @@ flowchart LR
     D --> L[DeepSeek JSON 解读]
     L --> J[Pydantic 结构校验]
     J --> UI
+    PDF[本地开放获取 PDF] --> IDX[分页切块与向量索引]
+    UI -->|POST /literature/ask| API
+    API --> IDX
+    IDX --> E[Top-k 文献证据]
+    E --> L
+    L --> R[带来源编号的回答]
+    R --> UI
 ```
 
 核心数据流：
@@ -51,6 +59,7 @@ flowchart LR
 原始特征 → 训练集标准化器 → 校准模型概率
                          ↘ 基础模型贡献度
 概率/阈值/Top 贡献摘要 → 可选 DeepSeek 解读 → JSON 校验 → 分区展示
+用户问题 → 本地向量检索 → Top-k PDF 片段 → DeepSeek 基于证据回答 → 引用校验与展示
 ```
 
 ## 目录说明
@@ -65,6 +74,10 @@ ui/
   dashboard.py       Streamlit 交互网页
 scripts/
   export_model.py    从授权研究 CSV 导出模型包
+  build_literature_index.py  从本地 PDF 构建文献向量索引
+knowledge_base/
+  source_documents/  本地文献 PDF，不提交 Git
+  index/             自动生成的向量与元数据，不提交 Git
 examples/
   sample_patient.json  非敏感演示输入
 tests/               自动化测试
@@ -88,6 +101,24 @@ outputs/             本地预测结果，不提交 Git
 
 ## 快速启动
 
+### Windows 一键启动（推荐）
+
+在项目根目录双击 `start_demo.bat`。首次运行时会在终端中提示输入 DeepSeek API Key，并保存到本机 `.env`；之后再次双击即可直接启动 FastAPI 和 Streamlit，并自动打开网页。
+
+停止服务时双击 `stop_demo.bat`。本机 `.runtime\` 只保存一键停止所需的进程记录；`.env` 和运行记录均已被 Git 忽略，不会上传 GitHub。
+
+也可以在 PowerShell 中运行：
+
+```powershell
+.\scripts\start_demo.ps1
+```
+
+```powershell
+.\scripts\stop_demo.ps1
+```
+
+如果 8000 或 8501 端口已被以前手工启动的服务占用，请先到对应终端按 `Ctrl+C`；一键停止脚本只会停止由一键启动脚本记录的进程，不会任意结束其他程序。
+
 ### 1. 克隆并安装依赖
 
 ```powershell
@@ -96,7 +127,19 @@ cd ppmi-rapid-subtype-prediction-demo
 python -m pip install -r requirements.txt
 ```
 
-### 2. 导出模型包
+首次使用 RAG 时会下载约百兆级的 `BAAI/bge-small-zh-v1.5` 向量模型并缓存在用户目录；这不是另一个桌面软件，后续可离线加载。Windows 的 Hugging Face 符号链接警告不影响运行，只表示缓存可能多占一些磁盘空间。
+
+### 2. 构建医学文献知识库（使用 RAG 时需要）
+
+只将你有权使用的开放获取 PDF 放入 `knowledge_base\source_documents\`，然后运行：
+
+```powershell
+python scripts\build_literature_index.py
+```
+
+脚本会逐页提取文字、重叠切块、生成向量，并写入 `knowledge_base\index\`。替换、增加或删除 PDF 后需要重新执行。PDF 和索引默认不提交 Git，详细规则见 [知识库说明](knowledge_base/README.md)。
+
+### 3. 导出模型包
 
 将 `--source-root` 替换为你获授权使用的研究文件目录：
 
@@ -112,7 +155,7 @@ python scripts/export_model.py `
 Model bundle saved to: artifacts\model_bundle.joblib
 ```
 
-### 3. 启动 FastAPI（终端 1）
+### 4. 启动 FastAPI（终端 1）
 
 DeepSeek 解读是可选功能。仅在需要时，在启动 FastAPI 的同一个终端设置密钥：
 
@@ -127,13 +170,13 @@ python -m uvicorn app.api:app --reload
 - 健康状态：`http://127.0.0.1:8000/health`
 - Swagger 文档：`http://127.0.0.1:8000/docs`
 
-### 4. 启动 Streamlit（终端 2）
+### 5. 启动 Streamlit（终端 2）
 
 ```powershell
 python -m streamlit run ui/dashboard.py
 ```
 
-打开 `http://127.0.0.1:8501`，加载示例数据并点击“开始预测”。只有勾选外部 API 调用说明并点击“生成 DeepSeek 辅助解读”时，才会调用 DeepSeek。
+打开 `http://127.0.0.1:8501`，加载示例数据并点击“开始预测”。只有勾选外部 API 调用说明并点击“生成 DeepSeek 辅助解读”时，才会调用 DeepSeek。页面下方的“帕金森病医学文献助手”与患者预测相互独立：输入一般性科研问题、确认外部调用后，即可查看带页码证据的回答。
 
 更完整的演示步骤、预期结果和排错方法见 [本地演示手册](docs/demo-runbook.md)。
 
@@ -144,6 +187,7 @@ python -m streamlit run ui/dashboard.py
 | `GET` | `/health` | 服务状态、特征数量、模型文件是否可用 | 否 |
 | `POST` | `/predict` | 返回校准概率、研究阈值和全部贡献度 | 否 |
 | `POST` | `/explain` | 本地重新预测后请求去标识化 DeepSeek 解读 | 是 |
+| `POST` | `/literature/ask` | 从本地 PDF 检索证据并生成带引用回答 | 是 |
 
 `POST /predict` 和 `POST /explain` 都接收同一组 12 项原始特征。示例请求见 `examples/sample_patient.json`。
 
@@ -192,6 +236,8 @@ python -m streamlit run ui/dashboard.py
 - API Key；
 - 完整模型文件或训练数据。
 
+文献问答会向 DeepSeek 发送“用户问题 + 本次检索出的 Top-k 文献片段及来源编号”。不要在问题中填写姓名、身份证号、联系方式、病历号或其他可识别个人的信息。DeepSeek 返回的引用编号若不在本次检索结果中，后端会拒绝该回答。
+
 DeepSeek 输出必须是三个非空字段：`probability_summary`、`contribution_summary`、`research_disclaimer`。非 JSON、缺字段、空内容或额外字段都会被后端拒绝。真实 `.env`、模型包、预测输出和 Git 工作区均已通过 `.gitignore` 排除。
 
 ## 配置
@@ -204,6 +250,7 @@ DeepSeek 输出必须是三个非空字段：`probability_summary`、`contributi
 | `DEEPSEEK_MODEL` | `deepseek-flash` | DeepSeek 模型 |
 | `PPMI_MODEL_ARTIFACT` | `artifacts/model_bundle.joblib` | 模型包路径 |
 | `PPMI_API_BASE_URL` | `http://127.0.0.1:8000` | Streamlit 调用的 API 地址 |
+| `PPMI_LITERATURE_INDEX` | `knowledge_base/index` | 本地文献向量索引目录 |
 
 ## 测试
 
@@ -240,6 +287,18 @@ FastAPI 或 Streamlit 尚未启动，或端口与 `PPMI_API_BASE_URL` 不一致�
 
 外部 DeepSeek 请求失败、超时或返回内容未通过 JSON/Pydantic 校验。稍后重试，并用网页给出的 `request_id` 对照 FastAPI 终端日志。
 
+### 文献助手提示“知识库尚未建立”
+
+确认 PDF 已放入 `knowledge_base\source_documents\`，运行 `python scripts\build_literature_index.py`，然后重启 FastAPI。`/health` 中的 `literature_index_available` 应为 `true`。
+
+### 新增文献后为什么搜不到？
+
+索引不会自动监控文件夹。新增、替换或删除 PDF 后重新运行建库脚本，随后重启 FastAPI。
+
+### RAG 回答是否等于医学结论？
+
+不是。它只是对有限本地语料的检索与归纳，可能漏检、误解或受文献质量影响；相似度也不代表证据等级。它不构成临床诊断、治疗或个体医疗建议。
+
 ### `POST /predict` 返回 `422 invalid_input`
 
 检查 12 项特征是否全部存在、是否为有限数值。FastAPI 的 `/docs` 页面可直接查看请求结构。
@@ -250,7 +309,7 @@ FastAPI 或 Streamlit 尚未启动，或端口与 `PPMI_API_BASE_URL` 不一致�
 
 ## 项目状态
 
-当前版本已完成模型打包、命令行预测、FastAPI、Streamlit、样本级贡献度、DeepSeek 结构化解读、隐私边界、请求日志、配置管理与自动化测试。下一阶段可将相同工程方法迁移到 RAG 知识库问答项目。
+当前版本已完成模型打包、命令行预测、FastAPI、Streamlit、样本级贡献度、DeepSeek 结构化解读、本地 PDF 文献 RAG、带页码引用校验、隐私边界、请求日志、配置管理与自动化测试。后续可继续增加 PubMed 导入、重排序和 Agent 工具调用，但它们不属于当前最小可用版本。
 
 ## 免责声明
 

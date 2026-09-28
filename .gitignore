@@ -5,12 +5,18 @@ __pycache__/
 # 本地虚拟环境与密钥
 .venv/
 .env
+.runtime/
 
 # Git 独立开发工作区
 .worktrees/
+.superpowers/
 
 # 每次预测生成的结果
 outputs/
 
 # 二进制模型文件：可由 export_model.py 重新导出
 artifacts/*.joblib
+
+# 本地医学文献与生成的向量索引（可能受版权或许可限制）
+knowledge_base/source_documents/*.pdf
+knowledge_base/index/

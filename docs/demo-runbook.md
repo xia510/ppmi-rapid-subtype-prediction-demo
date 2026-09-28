@@ -1,6 +1,6 @@
 # 本地演示手册
 
-这份手册用于面试演示或项目验收。完整演示约 5～8 分钟，需要两个 PowerShell 终端。
+这份手册用于面试演示或项目验收。完整演示约 8～12 分钟，需要两个 PowerShell 终端。
 
 ## 0. 演示前检查
 
@@ -35,7 +35,17 @@ Model bundle saved to: artifacts\model_bundle.joblib
 
 模型包包含 12 项特征顺序、训练集标准化器、基础模型、校准模型、研究阈值和版本元数据。
 
-## 2. 启动 FastAPI（终端 1）
+## 2. 构建本地医学文献索引
+
+先把有权使用的开放获取 PDF 放入 `knowledge_base\source_documents\`，不要放入患者病历或含个人身份信息的材料。
+
+```powershell
+python scripts\build_literature_index.py
+```
+
+预期输出包括文档数和切块数。首次运行会下载向量模型；后续替换文献时重新运行即可。
+
+## 3. 启动 FastAPI（终端 1）
 
 需要展示 DeepSeek 时，在这个终端设置密钥；只演示本地预测时可以跳过第一行。
 
@@ -49,9 +59,10 @@ python -m uvicorn app.api:app --reload
 1. 打开 `http://127.0.0.1:8000/health`；
 2. 确认 `status` 为 `ok`；
 3. 确认 `model_artifact_available` 为 `true`；
-4. 打开 `http://127.0.0.1:8000/docs`，展示三个接口。
+4. 确认 `literature_index_available` 为 `true`；
+5. 打开 `http://127.0.0.1:8000/docs`，展示四个接口。
 
-## 3. 启动 Streamlit（终端 2）
+## 4. 启动 Streamlit（终端 2）
 
 ```powershell
 cd "C:\path\to\ppmi-rapid-subtype-prediction-demo"
@@ -60,7 +71,7 @@ python -m streamlit run ui\dashboard.py
 
 浏览器打开 `http://127.0.0.1:8501`。页面顶部应显示“后端已连接，模型文件可用”。
 
-## 4. 演示本地预测
+## 5. 演示本地预测
 
 1. 点击“加载示例数据”；
 2. 点击“开始预测”；
@@ -71,7 +82,7 @@ python -m streamlit run ui\dashboard.py
 
 讲解重点：概率来自校准模型；贡献度来自基础模型的 `标准化值 × 系数`，两个模型职责不同但使用相同训练特征和标准化器。
 
-## 5. 演示 DeepSeek 辅助解读
+## 6. 演示 DeepSeek 辅助解读
 
 1. 阅读页面的数据发送说明；
 2. 勾选外部 API 调用确认；
@@ -80,7 +91,15 @@ python -m streamlit run ui\dashboard.py
 
 说明：后端会本地重新预测，只把去标识化摘要发给 DeepSeek。DeepSeek 返回 JSON 后还要经过 Pydantic 校验；它不参与概率计算。
 
-## 6. 演示请求编号与排错
+## 7. 演示医学文献 RAG
+
+1. 在“帕金森病医学文献助手”输入不含个人信息的一般性科研问题；
+2. 选择检索片段数并勾选外部调用确认；
+3. 点击“检索文献并生成回答”；
+4. 展示回答、证据局限，以及每条引用的文献名、PDF 文件、页码、相似度和原文片段；
+5. 强调流程是“本地检索证据在前，DeepSeek 归纳在后”，且后端拒绝虚构来源编号。
+
+## 8. 演示请求编号与排错
 
 可在未配置密钥的测试终端触发一次 `/explain`，网页会显示安全中文提示和 12 位请求编号。FastAPI 终端会出现类似：
 
@@ -90,7 +109,7 @@ api_error request_id=a1b2c3d4e5f6 code=deepseek_not_configured
 
 请求编号用于把网页错误与后端日志对应起来。日志不记录 API Key、Patient ID 或 12 项原始特征。
 
-## 7. 结束演示
+## 9. 结束演示
 
 分别在两个终端按 `Ctrl + C` 停止 Streamlit 和 FastAPI。不要关闭一个终端后在同一窗口同时启动两个长期运行服务。
 
