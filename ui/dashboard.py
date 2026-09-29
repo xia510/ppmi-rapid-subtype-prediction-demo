@@ -55,6 +55,9 @@ def format_api_error(status_code: int, detail: Any) -> str:
             "literature_answer_unavailable": "DeepSeek 暂时未能返回有文献依据的回答，请稍后重试。",
             "literature_rag_unavailable": "本地文献检索暂时不可用，请检查索引和Embedding模型。",
             "invalid_literature_question": "文献问题不能为空，Top-K 必须在 1 到 10 之间。",
+            "invalid_agent_request": "Agent 输入不正确，请检查患者特征、研究问题和证据数量。",
+            "agent_upstream_unavailable": "DeepSeek 暂时无法继续 Agent 分析，请稍后重试。",
+            "agent_execution_failed": "Agent 触发了本地安全限制，已停止本次分析。",
         }
         message = messages.get(error_code, "后端发生了未分类错误，请稍后重试。")
         request_id = detail.get("request_id")
@@ -153,12 +156,51 @@ def request_literature_answer(
     return None, format_api_error(response.status_code, detail)
 
 
+def request_agent_analysis(
+    payload: dict,
+    question: str,
+    top_k: int = 5,
+) -> tuple[Optional[dict], Optional[str]]:
+    """Send patient context and a research task to the bounded backend Agent."""
+    request_payload = {
+        **payload,
+        "question": str(question).strip(),
+        "top_k": int(top_k),
+    }
+    try:
+        response = requests.post(
+            f"{api_base_url()}/agent/analyze",
+            json=request_payload,
+            timeout=90,
+        )
+    except requests.RequestException:
+        return None, "无法连接预测后端。请确认 FastAPI 服务正在 127.0.0.1:8000 运行。"
+
+    if response.ok:
+        return response.json(), None
+    try:
+        detail = response.json()
+    except ValueError:
+        detail = response.text
+    return None, format_api_error(response.status_code, detail)
+
+
 def structured_interpretation_sections(interpretation: dict) -> list[tuple[str, str]]:
     """Map validated DeepSeek fields to the stable Chinese headings shown on the page."""
     return [
         ("概率与阈值", interpretation["probability_summary"]),
         ("特征贡献说明", interpretation["contribution_summary"]),
         ("科研使用说明", interpretation["research_disclaimer"]),
+    ]
+
+
+def agent_result_sections(result: dict) -> list[tuple[str, str]]:
+    """Map validated Agent fields to stable Chinese dashboard headings."""
+    return [
+        ("Agent 回答", result["answer_summary"]),
+        ("模型预测摘要", result["prediction_summary"]),
+        ("文献证据摘要", result["evidence_summary"]),
+        ("科研使用说明", result["research_disclaimer"]),
     ]
 
 
@@ -322,6 +364,78 @@ def main() -> None:
                 f"提供方：{interpretation['provider']} · 模型：{interpretation['model']}"
             )
             st.warning(interpretation["disclaimer"])
+
+        st.subheader("Agent 智能分析")
+        st.caption(
+            "DeepSeek只负责选择本地预测和文献检索工具并整理结果；"
+            "Patient ID 与 12 项原始特征不会发送给 DeepSeek。"
+        )
+        agent_question = st.text_area(
+            "Agent 研究任务",
+            placeholder="例如：结合模型贡献因素和本地文献，说明这个结果有哪些科研层面的依据与局限？",
+            key="agent_question",
+        )
+        agent_top_k = st.slider(
+            "Agent 最多使用的文献证据数量",
+            min_value=1,
+            max_value=5,
+            value=3,
+            key="agent_top_k",
+        )
+        agent_consent = st.checkbox(
+            "我理解去标识化模型结果、研究问题和检索文献片段会发送给 DeepSeek。",
+            key="agent_consent",
+        )
+        if st.button("运行 Agent 智能分析"):
+            if not agent_question.strip():
+                st.warning("请先输入 Agent 研究任务。")
+            elif not agent_consent:
+                st.warning("请先确认外部 API 调用说明。")
+            else:
+                with st.spinner("Agent 正在选择并调用本地工具..."):
+                    agent_result, error = request_agent_analysis(
+                        st.session_state["last_prediction_payload"],
+                        agent_question,
+                        agent_top_k,
+                    )
+                if error:
+                    st.error(error)
+                else:
+                    st.session_state["agent_result"] = agent_result
+
+        if "agent_result" in st.session_state:
+            agent_result = st.session_state["agent_result"]
+            for heading, content in agent_result_sections(agent_result):
+                st.markdown(f"#### {heading}")
+                if heading == "科研使用说明":
+                    st.warning(content)
+                else:
+                    st.info(content)
+
+            st.markdown("#### Agent 工具轨迹")
+            trace_rows = [
+                {"顺序": index, "工具": row["tool"], "状态": row["status"]}
+                for index, row in enumerate(agent_result["tool_trace"], start=1)
+            ]
+            if trace_rows:
+                st.dataframe(pd.DataFrame(trace_rows), hide_index=True, width="stretch")
+            else:
+                st.caption("本次分析未调用本地工具。")
+
+            if agent_result["citations"]:
+                st.markdown("#### Agent 使用的文献依据")
+                for citation in agent_result["citations"]:
+                    label = "{title} · 第 {page} 页 · 相似度 {score:.3f}".format(
+                        **citation
+                    )
+                    with st.expander(label):
+                        st.write(citation["text"])
+                        st.caption(
+                            f"本地文件：{citation['source']} · 来源编号：{citation['source_id']}"
+                        )
+            st.caption(
+                f"提供方：{agent_result['provider']} · 模型：{agent_result['model']}"
+            )
 
     st.divider()
     st.subheader("帕金森病医学文献助手")
