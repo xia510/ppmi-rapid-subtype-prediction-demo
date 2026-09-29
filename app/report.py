@@ -82,6 +82,17 @@ def render_research_report(
     citation_ids = [citation.source_id for citation in validated.citations]
     if cited_ids != citation_ids or len(citation_ids) != len(set(citation_ids)):
         raise ReportGenerationError("Report citations do not match verified source IDs.")
+    if not validated.citations:
+        raise ReportGenerationError("Evidence-backed reports require a verified citation.")
+
+    successful_tools = {
+        row.tool for row in validated.tool_trace if row.status == "success"
+    }
+    required_tools = {"predict_risk", "search_literature"}
+    if not required_tools.issubset(successful_tools):
+        raise ReportGenerationError(
+            "Evidence-backed reports require successful prediction and literature tools."
+        )
 
     timestamp = _utc_timestamp(generated_at)
     generated_label = timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")

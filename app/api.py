@@ -367,9 +367,13 @@ def create_app(
         patient = payload.model_dump(exclude={"question", "top_k"})
         try:
             service = resolve_agent_service()
+            agent_question = (
+                "生成最终科研报告前，必须调用 predict_risk 和 search_literature，"
+                f"然后完成以下研究任务：{payload.question}"
+            )
             agent_result = service.run(
                 patient,
-                payload.question,
+                agent_question,
                 top_k=payload.top_k,
             )
             return resolved_report_renderer(

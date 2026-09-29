@@ -77,6 +77,24 @@ class EvidenceReportTests(unittest.TestCase):
         with self.assertRaises(ReportGenerationError):
             render_research_report(mismatched, "研究问题")
 
+    def test_rejects_report_without_prediction_and_literature_evidence(self):
+        no_citations = dict(self.agent_result)
+        no_citations["cited_source_ids"] = []
+        no_citations["citations"] = []
+        with self.assertRaises(ReportGenerationError):
+            render_research_report(no_citations, "研究问题")
+
+        for missing_tool in ("predict_risk", "search_literature"):
+            with self.subTest(missing_tool=missing_tool):
+                incomplete_trace = dict(self.agent_result)
+                incomplete_trace["tool_trace"] = [
+                    row
+                    for row in self.agent_result["tool_trace"]
+                    if row["tool"] != missing_tool
+                ]
+                with self.assertRaises(ReportGenerationError):
+                    render_research_report(incomplete_trace, "研究问题")
+
     def test_normalizes_markdown_control_characters_inside_citation_fields(self):
         result_data = dict(self.agent_result)
         result_data["citations"] = [
