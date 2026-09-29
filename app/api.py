@@ -11,6 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, constr
 
+from app.agent import AgentExecutionError, ResearchAgent
 from app.deepseek import (
     DeepSeekConfigurationError,
     DeepSeekRequestError,
@@ -58,6 +59,13 @@ class LiteratureQuestionRequest(BaseModel):
 
     question: constr(strip_whitespace=True, min_length=2, max_length=500)
     top_k: int = Field(default=5, ge=1, le=10)
+
+
+class AgentAnalyzeRequest(PatientRequest):
+    """Define patient inputs plus the bounded research task for the Agent."""
+
+    question: constr(strip_whitespace=True, min_length=2, max_length=500)
+    top_k: int = Field(default=5, ge=1, le=5)
 
 
 def _prediction_for_external_explanation(prediction: dict) -> dict:
@@ -108,6 +116,7 @@ def create_app(
     explainer: Optional[Callable[[dict], dict]] = None,
     literature_service: Optional[object] = None,
     literature_index_path: Optional[Path] = None,
+    agent_service: Optional[object] = None,
 ) -> FastAPI:
     """创建 API 应用，并允许测试注入临时模型路径和假解释器。"""
     # 正常运行时从 settings.py 读取模型位置；测试时可以传入临时模型文件。
@@ -118,6 +127,7 @@ def create_app(
         literature_index_path or configured_literature_index_path()
     )
     literature_service_holder = {"service": literature_service}
+    agent_service_holder = {"service": agent_service}
     api = FastAPI(
         title="PPMI Rapid Subtype Prediction Demo",
         description="Research demonstration API. Not for clinical diagnosis.",
@@ -150,14 +160,25 @@ def create_app(
         """将 Pydantic/FastAPI 输入校验错误转换为统一的 422 响应。"""
         # 不直接返回复杂的框架异常，网页只依赖稳定的 invalid_input 错误码。
         is_literature_request = request.url.path == "/literature/ask"
+        is_agent_request = request.url.path == "/agent/analyze"
         return _error_response(
             request,
             status_code=422,
-            code=("invalid_literature_question" if is_literature_request else "invalid_input"),
-            message=(
-                "Literature question or top_k is invalid."
+            code=(
+                "invalid_agent_request"
+                if is_agent_request
+                else "invalid_literature_question"
                 if is_literature_request
-                else "Input is incomplete or has an invalid numeric value."
+                else "invalid_input"
+            ),
+            message=(
+                "Agent patient input, question, or top_k is invalid."
+                if is_agent_request
+                else (
+                    "Literature question or top_k is invalid."
+                    if is_literature_request
+                    else "Input is incomplete or has an invalid numeric value."
+                )
             ),
         )
 
@@ -180,6 +201,19 @@ def create_app(
         if service is None:
             service = LiteratureRAG(LiteratureIndex.load(resolved_literature_index_path))
             literature_service_holder["service"] = service
+        return service
+
+    def resolve_agent_service():
+        service = agent_service_holder["service"]
+        if service is None:
+            index = LiteratureIndex.load(resolved_literature_index_path)
+            service = ResearchAgent(
+                predictor=lambda patient: predict_from_patient(
+                    patient, resolved_artifact_path
+                ),
+                literature_index=index,
+            )
+            agent_service_holder["service"] = service
         return service
 
     @api.post("/literature/ask")
@@ -222,6 +256,66 @@ def create_app(
                 status_code=503,
                 code="literature_rag_unavailable",
                 message="The local literature RAG service is unavailable.",
+            )
+
+    @api.post("/agent/analyze")
+    def analyze_with_agent(payload: AgentAnalyzeRequest, request: Request) -> object:
+        """Run the bounded Agent over local prediction and literature tools."""
+        patient = payload.model_dump(exclude={"question", "top_k"})
+        try:
+            service = resolve_agent_service()
+            return service.run(patient, payload.question, top_k=payload.top_k)
+        except FileNotFoundError:
+            return _error_response(
+                request,
+                status_code=503,
+                code="model_artifact_unavailable",
+                message="Model artifact is unavailable. Export it before using the Agent.",
+            )
+        except LiteratureIndexNotFoundError:
+            return _error_response(
+                request,
+                status_code=503,
+                code="literature_index_unavailable",
+                message="Local literature index is unavailable.",
+            )
+        except DeepSeekConfigurationError:
+            return _error_response(
+                request,
+                status_code=503,
+                code="deepseek_not_configured",
+                message="DeepSeek API key is not configured.",
+            )
+        except DeepSeekRequestError as error:
+            LOGGER.warning(
+                "agent_upstream_failure request_id=%s reason=%s",
+                _request_id(request),
+                error,
+            )
+            return _error_response(
+                request,
+                status_code=502,
+                code="agent_upstream_unavailable",
+                message="DeepSeek could not continue the Agent run.",
+            )
+        except AgentExecutionError as error:
+            LOGGER.warning(
+                "agent_execution_failure request_id=%s reason=%s",
+                _request_id(request),
+                error,
+            )
+            return _error_response(
+                request,
+                status_code=502,
+                code="agent_execution_failed",
+                message="The Agent stopped at a local safety boundary.",
+            )
+        except InputValidationError:
+            return _error_response(
+                request,
+                status_code=422,
+                code="invalid_agent_request",
+                message="Agent patient input contains an invalid value.",
             )
 
     @api.post("/predict")
@@ -291,7 +385,7 @@ def create_app(
         # 同时返回本地原始预测和经过结构校验的中文辅助解释。
         return {"prediction": prediction, "interpretation": interpretation}
 
-    # 把已注册中间件、异常处理器和三个接口的 FastAPI 对象返回。
+    # 把已注册中间件、异常处理器和所有接口的 FastAPI 对象返回。
     return api
 
 

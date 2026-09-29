@@ -11,7 +11,9 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_DIR))
 
 from app.api import app, create_app
+from app.agent import AgentExecutionError
 from app.deepseek import DeepSeekConfigurationError, DeepSeekRequestError
+from app.rag import LiteratureIndexNotFoundError
 from scripts.export_model import export_model_bundle
 from tests.data_support import authorized_source_root
 
@@ -199,6 +201,117 @@ class LiteratureApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
         self.assertEqual(response.json()["error"]["code"], "invalid_literature_question")
+
+
+class AgentApiTests(unittest.TestCase):
+    patient = {
+        "patient_id": "agent-api-demo",
+        "scopa": 1.0,
+        "NP1COG": 2.0,
+        "rem": 3.0,
+        "DVT_SFTANIM": 4.0,
+        "MIA_STRIATUM_mean": 5.0,
+        "LEDD": 6.0,
+        "SEX": 1.0,
+        "updrs3_score": 8.0,
+        "MSEADLG": 9.0,
+        "DVT_SDM": 10.0,
+        "upsit_pctl": 11.0,
+        "quip": 12.0,
+    }
+
+    def test_agent_analyze_returns_structured_result_from_injected_service(self):
+        received = {}
+
+        class FakeAgentService:
+            def run(self, patient, question, top_k=5):
+                received.update({"patient": patient, "question": question, "top_k": top_k})
+                return {
+                    "answer_summary": "完成研究分析。",
+                    "prediction_summary": "概率低于阈值。",
+                    "evidence_summary": "证据为群体层面。",
+                    "cited_source_ids": ["paper-a-p2-c1"],
+                    "citations": [{"source_id": "paper-a-p2-c1", "page": 2}],
+                    "tool_trace": [{"tool": "predict_risk", "status": "success"}],
+                    "research_disclaimer": "仅供科研演示。",
+                    "provider": "DeepSeek",
+                    "model": "test-model",
+                }
+
+        client = TestClient(
+            create_app(Path("missing-model.joblib"), agent_service=FakeAgentService())
+        )
+        response = client.post(
+            "/agent/analyze",
+            json={**self.patient, "question": "结合模型和文献分析", "top_k": 3},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["answer_summary"], "完成研究分析。")
+        self.assertEqual(received["question"], "结合模型和文献分析")
+        self.assertEqual(received["top_k"], 3)
+        self.assertNotIn("question", received["patient"])
+        self.assertNotIn("top_k", received["patient"])
+        self.assertRegex(response.headers.get("X-Request-ID", ""), r"^[0-9a-f]{12}$")
+
+    def test_agent_analyze_uses_specific_validation_error(self):
+        client = TestClient(
+            create_app(Path("missing-model.joblib"), agent_service=object())
+        )
+        response = client.post(
+            "/agent/analyze",
+            json={**self.patient, "question": " ", "top_k": 6},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["error"]["code"], "invalid_agent_request")
+
+    def test_agent_analyze_maps_missing_resources(self):
+        cases = [
+            (FileNotFoundError(), "model_artifact_unavailable"),
+            (LiteratureIndexNotFoundError("missing"), "literature_index_unavailable"),
+            (DeepSeekConfigurationError("missing"), "deepseek_not_configured"),
+        ]
+        for error, expected_code in cases:
+            with self.subTest(expected_code=expected_code):
+                class FailingAgent:
+                    def run(self, patient, question, top_k=5):
+                        raise error
+
+                client = TestClient(
+                    create_app(Path("missing-model.joblib"), agent_service=FailingAgent())
+                )
+                response = client.post(
+                    "/agent/analyze",
+                    json={**self.patient, "question": "执行研究分析", "top_k": 3},
+                )
+
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(response.json()["error"]["code"], expected_code)
+                self.assertRegex(response.json()["request_id"], r"^[0-9a-f]{12}$")
+
+    def test_agent_analyze_maps_provider_and_execution_failures(self):
+        cases = [
+            (DeepSeekRequestError("upstream"), "agent_upstream_unavailable"),
+            (AgentExecutionError("unknown tool"), "agent_execution_failed"),
+        ]
+        for error, expected_code in cases:
+            with self.subTest(expected_code=expected_code):
+                class FailingAgent:
+                    def run(self, patient, question, top_k=5):
+                        raise error
+
+                client = TestClient(
+                    create_app(Path("missing-model.joblib"), agent_service=FailingAgent())
+                )
+                response = client.post(
+                    "/agent/analyze",
+                    json={**self.patient, "question": "执行研究分析", "top_k": 3},
+                )
+
+                self.assertEqual(response.status_code, 502)
+                self.assertEqual(response.json()["error"]["code"], expected_code)
+                self.assertRegex(response.json()["request_id"], r"^[0-9a-f]{12}$")
 
 
 if __name__ == "__main__":
