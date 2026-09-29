@@ -24,6 +24,7 @@ from app.rag import (
     LiteratureRAG,
     RAGError,
 )
+from app.report import ReportGenerationError, render_research_report
 from app.settings import (
     literature_index_path as configured_literature_index_path,
     model_artifact_path,
@@ -66,6 +67,10 @@ class AgentAnalyzeRequest(PatientRequest):
 
     question: constr(strip_whitespace=True, min_length=2, max_length=500)
     top_k: int = Field(default=5, ge=1, le=5)
+
+
+class ReportGenerateRequest(AgentAnalyzeRequest):
+    """Define patient inputs and research options for a Markdown report."""
 
 
 def _prediction_for_external_explanation(prediction: dict) -> dict:
@@ -117,6 +122,7 @@ def create_app(
     literature_service: Optional[object] = None,
     literature_index_path: Optional[Path] = None,
     agent_service: Optional[object] = None,
+    report_renderer: Optional[Callable[..., dict]] = None,
 ) -> FastAPI:
     """创建 API 应用，并允许测试注入临时模型路径和假解释器。"""
     # 正常运行时从 settings.py 读取模型位置；测试时可以传入临时模型文件。
@@ -128,6 +134,7 @@ def create_app(
     )
     literature_service_holder = {"service": literature_service}
     agent_service_holder = {"service": agent_service}
+    resolved_report_renderer = report_renderer or render_research_report
     api = FastAPI(
         title="PPMI Rapid Subtype Prediction Demo",
         description="Research demonstration API. Not for clinical diagnosis.",
@@ -161,18 +168,23 @@ def create_app(
         # 不直接返回复杂的框架异常，网页只依赖稳定的 invalid_input 错误码。
         is_literature_request = request.url.path == "/literature/ask"
         is_agent_request = request.url.path == "/agent/analyze"
+        is_report_request = request.url.path == "/report/generate"
         return _error_response(
             request,
             status_code=422,
             code=(
-                "invalid_agent_request"
+                "invalid_report_request"
+                if is_report_request
+                else "invalid_agent_request"
                 if is_agent_request
                 else "invalid_literature_question"
                 if is_literature_request
                 else "invalid_input"
             ),
             message=(
-                "Agent patient input, question, or top_k is invalid."
+                "Report patient input, question, or top_k is invalid."
+                if is_report_request
+                else "Agent patient input, question, or top_k is invalid."
                 if is_agent_request
                 else (
                     "Literature question or top_k is invalid."
@@ -215,6 +227,74 @@ def create_app(
             )
             agent_service_holder["service"] = service
         return service
+
+    def agent_failure_response(
+        error: Exception,
+        request: Request,
+        invalid_code: str,
+        context: str,
+    ) -> JSONResponse:
+        """Map shared Agent dependencies to stable, privacy-safe API errors."""
+        if isinstance(error, FileNotFoundError):
+            return _error_response(
+                request,
+                status_code=503,
+                code="model_artifact_unavailable",
+                message="Model artifact is unavailable. Export it before using the Agent.",
+            )
+        if isinstance(error, LiteratureIndexNotFoundError):
+            return _error_response(
+                request,
+                status_code=503,
+                code="literature_index_unavailable",
+                message="Local literature index is unavailable.",
+            )
+        if isinstance(error, RAGError):
+            return _error_response(
+                request,
+                status_code=503,
+                code="literature_rag_unavailable",
+                message="The local literature RAG service is unavailable.",
+            )
+        if isinstance(error, DeepSeekConfigurationError):
+            return _error_response(
+                request,
+                status_code=503,
+                code="deepseek_not_configured",
+                message="DeepSeek API key is not configured.",
+            )
+        if isinstance(error, DeepSeekRequestError):
+            LOGGER.warning(
+                "%s_upstream_failure request_id=%s reason=%s",
+                context,
+                _request_id(request),
+                error,
+            )
+            return _error_response(
+                request,
+                status_code=502,
+                code="agent_upstream_unavailable",
+                message="DeepSeek could not continue the Agent run.",
+            )
+        if isinstance(error, AgentExecutionError):
+            LOGGER.warning(
+                "%s_execution_failure request_id=%s reason=%s",
+                context,
+                _request_id(request),
+                error,
+            )
+            return _error_response(
+                request,
+                status_code=502,
+                code="agent_execution_failed",
+                message="The Agent stopped at a local safety boundary.",
+            )
+        return _error_response(
+            request,
+            status_code=422,
+            code=invalid_code,
+            message="Patient input contains an invalid value.",
+        )
 
     @api.post("/literature/ask")
     def ask_literature(payload: LiteratureQuestionRequest, request: Request) -> object:
@@ -265,64 +345,64 @@ def create_app(
         try:
             service = resolve_agent_service()
             return service.run(patient, payload.question, top_k=payload.top_k)
-        except FileNotFoundError:
-            return _error_response(
+        except (
+            FileNotFoundError,
+            LiteratureIndexNotFoundError,
+            RAGError,
+            DeepSeekConfigurationError,
+            DeepSeekRequestError,
+            AgentExecutionError,
+            InputValidationError,
+        ) as error:
+            return agent_failure_response(
+                error,
                 request,
-                status_code=503,
-                code="model_artifact_unavailable",
-                message="Model artifact is unavailable. Export it before using the Agent.",
+                invalid_code="invalid_agent_request",
+                context="agent",
             )
-        except LiteratureIndexNotFoundError:
-            return _error_response(
-                request,
-                status_code=503,
-                code="literature_index_unavailable",
-                message="Local literature index is unavailable.",
+
+    @api.post("/report/generate")
+    def generate_report(payload: ReportGenerateRequest, request: Request) -> object:
+        """Run the bounded Agent and render its verified result as Markdown."""
+        patient = payload.model_dump(exclude={"question", "top_k"})
+        try:
+            service = resolve_agent_service()
+            agent_result = service.run(
+                patient,
+                payload.question,
+                top_k=payload.top_k,
             )
-        except RAGError:
-            return _error_response(
-                request,
-                status_code=503,
-                code="literature_rag_unavailable",
-                message="The local literature RAG service is unavailable.",
+            return resolved_report_renderer(
+                agent_result,
+                payload.question,
+                patient_id=payload.patient_id,
             )
-        except DeepSeekConfigurationError:
-            return _error_response(
-                request,
-                status_code=503,
-                code="deepseek_not_configured",
-                message="DeepSeek API key is not configured.",
-            )
-        except DeepSeekRequestError as error:
+        except ReportGenerationError as error:
             LOGGER.warning(
-                "agent_upstream_failure request_id=%s reason=%s",
+                "report_generation_failure request_id=%s reason=%s",
                 _request_id(request),
                 error,
             )
             return _error_response(
                 request,
                 status_code=502,
-                code="agent_upstream_unavailable",
-                message="DeepSeek could not continue the Agent run.",
+                code="report_generation_failed",
+                message="A safe research report could not be generated.",
             )
-        except AgentExecutionError as error:
-            LOGGER.warning(
-                "agent_execution_failure request_id=%s reason=%s",
-                _request_id(request),
+        except (
+            FileNotFoundError,
+            LiteratureIndexNotFoundError,
+            RAGError,
+            DeepSeekConfigurationError,
+            DeepSeekRequestError,
+            AgentExecutionError,
+            InputValidationError,
+        ) as error:
+            return agent_failure_response(
                 error,
-            )
-            return _error_response(
                 request,
-                status_code=502,
-                code="agent_execution_failed",
-                message="The Agent stopped at a local safety boundary.",
-            )
-        except InputValidationError:
-            return _error_response(
-                request,
-                status_code=422,
-                code="invalid_agent_request",
-                message="Agent patient input contains an invalid value.",
+                invalid_code="invalid_report_request",
+                context="report_agent",
             )
 
     @api.post("/predict")

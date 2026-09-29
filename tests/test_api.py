@@ -14,6 +14,7 @@ from app.api import app, create_app
 from app.agent import AgentExecutionError
 from app.deepseek import DeepSeekConfigurationError, DeepSeekRequestError
 from app.rag import LiteratureIndexNotFoundError, RAGError
+from app.report import ReportGenerationError
 from scripts.export_model import export_model_bundle
 from tests.data_support import authorized_source_root
 
@@ -314,6 +315,138 @@ class AgentApiTests(unittest.TestCase):
                 self.assertEqual(response.json()["error"]["code"], expected_code)
                 self.assertRegex(response.json()["request_id"], r"^[0-9a-f]{12}$")
 
+
+class ReportApiTests(unittest.TestCase):
+    patient = AgentApiTests.patient
+
+    def test_report_generate_uses_agent_result_and_returns_markdown_metadata(self):
+        received = {}
+        agent_result = {
+            "answer_summary": "完成研究分析。",
+            "prediction_summary": "概率低于阈值。",
+            "evidence_summary": "证据为群体层面。",
+            "cited_source_ids": [],
+            "citations": [],
+            "tool_trace": [{"tool": "predict_risk", "status": "success"}],
+            "research_disclaimer": "仅供科研演示。",
+            "provider": "DeepSeek",
+            "model": "test-model",
+        }
+
+        class FakeAgentService:
+            def run(self, patient, question, top_k=5):
+                received["agent"] = {
+                    "patient": patient,
+                    "question": question,
+                    "top_k": top_k,
+                }
+                return agent_result
+
+        def fake_renderer(result, question, patient_id=None):
+            received["renderer"] = {
+                "result": result,
+                "question": question,
+                "patient_id": patient_id,
+            }
+            return {
+                "filename": "ppmi-research-report-test.md",
+                "media_type": "text/markdown; charset=utf-8",
+                "markdown": "# 报告\n",
+                "citation_count": 0,
+                "tool_trace": result["tool_trace"],
+                "provider": result["provider"],
+                "model": result["model"],
+            }
+
+        client = TestClient(
+            create_app(
+                Path("missing-model.joblib"),
+                agent_service=FakeAgentService(),
+                report_renderer=fake_renderer,
+            )
+        )
+        response = client.post(
+            "/report/generate",
+            json={**self.patient, "question": "生成科研报告", "top_k": 3},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["markdown"], "# 报告\n")
+        self.assertEqual(response.json()["filename"], "ppmi-research-report-test.md")
+        self.assertNotIn("question", received["agent"]["patient"])
+        self.assertNotIn("top_k", received["agent"]["patient"])
+        self.assertEqual(received["agent"]["top_k"], 3)
+        self.assertIs(received["renderer"]["result"], agent_result)
+        self.assertEqual(received["renderer"]["patient_id"], "agent-api-demo")
+        self.assertNotIn("scopa", received["renderer"])
+        self.assertRegex(response.headers.get("X-Request-ID", ""), r"^[0-9a-f]{12}$")
+
+    def test_report_generate_uses_specific_validation_error(self):
+        client = TestClient(
+            create_app(Path("missing-model.joblib"), agent_service=object())
+        )
+
+        response = client.post(
+            "/report/generate",
+            json={**self.patient, "question": " ", "top_k": 7},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["error"]["code"], "invalid_report_request")
+
+    def test_report_generate_reuses_safe_agent_error_codes(self):
+        cases = [
+            (FileNotFoundError(), 503, "model_artifact_unavailable"),
+            (LiteratureIndexNotFoundError("missing"), 503, "literature_index_unavailable"),
+            (RAGError("dimension mismatch"), 503, "literature_rag_unavailable"),
+            (DeepSeekConfigurationError("missing"), 503, "deepseek_not_configured"),
+            (DeepSeekRequestError("upstream"), 502, "agent_upstream_unavailable"),
+            (AgentExecutionError("unknown tool"), 502, "agent_execution_failed"),
+        ]
+        for error, expected_status, expected_code in cases:
+            with self.subTest(expected_code=expected_code):
+                class FailingAgent:
+                    def run(self, patient, question, top_k=5):
+                        raise error
+
+                client = TestClient(
+                    create_app(
+                        Path("missing-model.joblib"),
+                        agent_service=FailingAgent(),
+                    )
+                )
+                response = client.post(
+                    "/report/generate",
+                    json={**self.patient, "question": "生成科研报告", "top_k": 3},
+                )
+
+                self.assertEqual(response.status_code, expected_status)
+                self.assertEqual(response.json()["error"]["code"], expected_code)
+                self.assertRegex(response.json()["request_id"], r"^[0-9a-f]{12}$")
+
+    def test_report_generate_maps_renderer_failure(self):
+        class FakeAgentService:
+            def run(self, patient, question, top_k=5):
+                return {"answer_summary": "invalid for report"}
+
+        def failing_renderer(result, question, patient_id=None):
+            raise ReportGenerationError("missing citations")
+
+        client = TestClient(
+            create_app(
+                Path("missing-model.joblib"),
+                agent_service=FakeAgentService(),
+                report_renderer=failing_renderer,
+            )
+        )
+        response = client.post(
+            "/report/generate",
+            json={**self.patient, "question": "生成科研报告", "top_k": 3},
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "report_generation_failed")
+        self.assertRegex(response.json()["request_id"], r"^[0-9a-f]{12}$")
 
 if __name__ == "__main__":
     unittest.main()
