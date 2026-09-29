@@ -58,6 +58,8 @@ def format_api_error(status_code: int, detail: Any) -> str:
             "invalid_agent_request": "Agent 输入不正确，请检查患者特征、研究问题和证据数量。",
             "agent_upstream_unavailable": "DeepSeek 暂时无法继续 Agent 分析，请稍后重试。",
             "agent_execution_failed": "Agent 触发了本地安全限制，已停止本次分析。",
+            "invalid_report_request": "报告输入不正确，请检查患者特征、研究问题和证据数量。",
+            "report_generation_failed": "后端未能生成安全、完整的科研报告，请稍后重试。",
         }
         message = messages.get(error_code, "后端发生了未分类错误，请稍后重试。")
         request_id = detail.get("request_id")
@@ -172,6 +174,35 @@ def request_agent_analysis(
             f"{api_base_url()}/agent/analyze",
             json=request_payload,
             timeout=90,
+        )
+    except requests.RequestException:
+        return None, "无法连接预测后端。请确认 FastAPI 服务正在 127.0.0.1:8000 运行。"
+
+    if response.ok:
+        return response.json(), None
+    try:
+        detail = response.json()
+    except ValueError:
+        detail = response.text
+    return None, format_api_error(response.status_code, detail)
+
+
+def request_research_report(
+    payload: dict,
+    question: str,
+    top_k: int = 5,
+) -> tuple[Optional[dict], Optional[str]]:
+    """Run the bounded Agent and request a deterministic Markdown report."""
+    request_payload = {
+        **payload,
+        "question": str(question).strip(),
+        "top_k": int(top_k),
+    }
+    try:
+        response = requests.post(
+            f"{api_base_url()}/report/generate",
+            json=request_payload,
+            timeout=120,
         )
     except requests.RequestException:
         return None, "无法连接预测后端。请确认 FastAPI 服务正在 127.0.0.1:8000 运行。"
@@ -324,6 +355,8 @@ def main() -> None:
             st.session_state["prediction_result"] = result
             st.session_state["last_prediction_payload"] = payload
             st.session_state.pop("deepseek_interpretation", None)
+            st.session_state.pop("agent_result", None)
+            st.session_state.pop("report_result", None)
 
     if "prediction_result" in st.session_state:
         _render_result(st.session_state["prediction_result"])
@@ -435,6 +468,62 @@ def main() -> None:
                         )
             st.caption(
                 f"提供方：{agent_result['provider']} · 模型：{agent_result['model']}"
+            )
+
+        st.subheader("带文献依据的最终报告")
+        st.caption(
+            "后端会运行受限制 Agent，再用本地固定模板生成 Markdown；"
+            "报告引用只能来自本次实际检索并校验过的文献。"
+        )
+        report_question = st.text_area(
+            "报告研究问题",
+            placeholder="例如：结合模型结果和本地文献，总结主要科研依据、局限和需要谨慎解释之处。",
+            key="report_question",
+        )
+        report_top_k = st.slider(
+            "报告最多使用的文献证据数量",
+            min_value=1,
+            max_value=5,
+            value=3,
+            key="report_top_k",
+        )
+        report_consent = st.checkbox(
+            "我理解去标识化模型结果、研究问题和检索文献片段会发送给 DeepSeek。",
+            key="report_consent",
+        )
+        if st.button("生成最终 Markdown 报告"):
+            if not report_question.strip():
+                st.warning("请先输入报告研究问题。")
+            elif not report_consent:
+                st.warning("请先确认外部 API 调用说明。")
+            else:
+                with st.spinner("正在运行 Agent 并生成科研报告..."):
+                    report_result, error = request_research_report(
+                        st.session_state["last_prediction_payload"],
+                        report_question,
+                        report_top_k,
+                    )
+                if error:
+                    st.error(error)
+                else:
+                    st.session_state["report_result"] = report_result
+
+        if "report_result" in st.session_state:
+            report_result = st.session_state["report_result"]
+            st.markdown("#### 报告预览")
+            st.markdown(report_result["markdown"])
+            st.caption(
+                "引用数量：{count} · 提供方：{provider} · 模型：{model}".format(
+                    count=report_result["citation_count"],
+                    provider=report_result["provider"],
+                    model=report_result["model"],
+                )
+            )
+            st.download_button(
+                "下载 Markdown 报告",
+                data=report_result["markdown"].encode("utf-8"),
+                file_name=report_result["filename"],
+                mime=report_result["media_type"],
             )
 
     st.divider()

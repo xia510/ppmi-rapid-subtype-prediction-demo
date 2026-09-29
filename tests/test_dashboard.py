@@ -12,6 +12,7 @@ from ui.dashboard import (
     build_patient_payload,
     format_api_error,
     request_agent_analysis,
+    request_research_report,
     request_literature_answer,
     request_explanation,
 )
@@ -19,6 +20,60 @@ import ui.dashboard as dashboard
 
 
 class DashboardHelperTests(unittest.TestCase):
+    def test_request_research_report_preserves_exact_markdown_from_api(self):
+        response = Mock()
+        response.ok = True
+        response.json.return_value = {
+            "filename": "ppmi-research-report-test.md",
+            "media_type": "text/markdown; charset=utf-8",
+            "markdown": "# 科研报告\n\n原样内容。\n",
+            "citation_count": 2,
+            "tool_trace": [],
+            "provider": "DeepSeek",
+            "model": "test-model",
+        }
+        patient = {"patient_id": "demo", "scopa": 1.0}
+
+        with patch("ui.dashboard.requests.post", return_value=response) as post:
+            result, error = request_research_report(
+                patient,
+                "生成带证据的报告",
+                top_k=4,
+            )
+
+        self.assertIsNone(error)
+        self.assertEqual(result["markdown"], "# 科研报告\n\n原样内容。\n")
+        self.assertTrue(post.call_args.args[0].endswith("/report/generate"))
+        self.assertEqual(
+            post.call_args.kwargs["json"],
+            {
+                "patient_id": "demo",
+                "scopa": 1.0,
+                "question": "生成带证据的报告",
+                "top_k": 4,
+            },
+        )
+        self.assertEqual(post.call_args.kwargs["timeout"], 120)
+
+    def test_format_api_error_explains_report_failures(self):
+        cases = {
+            "invalid_report_request": "报告输入",
+            "report_generation_failed": "报告",
+        }
+        for code, expected_text in cases.items():
+            with self.subTest(code=code):
+                message = format_api_error(
+                    502,
+                    {
+                        "error": {"code": code, "message": "Internal detail."},
+                        "request_id": "report123456",
+                    },
+                )
+
+                self.assertIn(expected_text, message)
+                self.assertIn("请求编号：report123456", message)
+                self.assertNotIn("Internal detail.", message)
+
     def test_request_agent_analysis_posts_patient_question_and_top_k(self):
         response = Mock()
         response.ok = True
