@@ -196,6 +196,27 @@ class AgentTests(unittest.TestCase):
             agent.run(PATIENT, "执行研究分析")
         self.assertEqual(index.calls, [])
 
+    def test_agent_rejects_search_above_requested_top_k(self):
+        requester = QueuedTurns(
+            [
+                tool_turn(
+                    "call-1",
+                    "search_literature",
+                    {"question": "自主神经症状", "top_k": 4},
+                )
+            ]
+        )
+        index = FakeIndex()
+        agent = ResearchAgent(
+            predictor=lambda patient: copy.deepcopy(PREDICTION),
+            literature_index=index,
+            turn_requester=requester,
+        )
+
+        with self.assertRaisesRegex(AgentExecutionError, "requested evidence limit"):
+            agent.run(PATIENT, "执行研究分析", top_k=2)
+        self.assertEqual(index.calls, [])
+
     def test_agent_rejects_identical_repeated_call(self):
         call = {"question": "自主神经症状", "top_k": 3}
         requester = QueuedTurns(

@@ -171,6 +171,13 @@ class ResearchAgent:
                     raise AgentExecutionError("Agent supplied invalid tool arguments.") from error
 
                 normalized_arguments = validated.model_dump()
+                if (
+                    name == "search_literature"
+                    and normalized_arguments["top_k"] > int(top_k)
+                ):
+                    raise AgentExecutionError(
+                        "Agent exceeded the user-requested evidence limit."
+                    )
                 signature = "{name}:{arguments}".format(
                     name=name,
                     arguments=json.dumps(
