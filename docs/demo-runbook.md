@@ -60,7 +60,7 @@ python -m uvicorn app.api:app --reload
 2. 确认 `status` 为 `ok`；
 3. 确认 `model_artifact_available` 为 `true`；
 4. 确认 `literature_index_available` 为 `true`；
-5. 打开 `http://127.0.0.1:8000/docs`，展示包括 `/agent/analyze` 在内的五个接口。
+5. 打开 `http://127.0.0.1:8000/docs`，展示包括 `/agent/analyze` 和 `/report/generate` 在内的六个接口。
 
 ## 4. 启动 Streamlit（终端 2）
 
@@ -108,7 +108,16 @@ python -m streamlit run ui\dashboard.py
 5. 展示回答、预测摘要、证据摘要、文献引用和工具轨迹；
 6. 强调 DeepSeek只选择工具，本地代码才真正执行预测与检索；调用次数最多 4 次，原始患者值不会发送给 DeepSeek。
 
-## 9. 演示请求编号与排错
+## 9. 演示带文献依据的最终报告
+
+1. 在“带文献依据的最终报告”输入一个科研问题；
+2. 将证据数量设为 3，并勾选外部调用确认；
+3. 点击“生成最终 Markdown 报告”；
+4. 检查预览是否按“研究问题—综合结论—模型预测—文献证据—参考证据—工具记录—科研声明”排列；
+5. 点击“下载 Markdown 报告”，确认下载内容与网页预览完全一致；
+6. 强调 DeepSeek返回的是结构化 Agent 结果，`report.py` 才负责本地固定排版；引用只能来自本次实际检索并通过来源编号校验的文献。
+
+## 10. 演示请求编号与排错
 
 可在未配置密钥的测试终端触发一次 `/explain`，网页会显示安全中文提示和 12 位请求编号。FastAPI 终端会出现类似：
 
@@ -118,7 +127,7 @@ api_error request_id=a1b2c3d4e5f6 code=deepseek_not_configured
 
 请求编号用于把网页错误与后端日志对应起来。日志不记录 API Key、Patient ID 或 12 项原始特征。
 
-## 10. 结束演示
+## 11. 结束演示
 
 分别在两个终端按 `Ctrl + C` 停止 Streamlit 和 FastAPI。不要关闭一个终端后在同一窗口同时启动两个长期运行服务。
 

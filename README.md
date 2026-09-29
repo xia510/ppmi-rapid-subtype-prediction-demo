@@ -1,6 +1,6 @@
 # PPMI Rapid Subtype Prediction Demo
 
-一个将科研机器学习模型封装为可交互 AI 应用的端到端工程项目：本地 Logistic Regression 负责预测，FastAPI 提供服务，Streamlit 展示结果，DeepSeek 在用户明确同意后提供去标识化科研解读；本地医学文献 RAG 可以从自建 PDF 知识库检索证据，轻量 Agent 还能按研究任务选择并调用预测与文献工具。
+一个将科研机器学习模型封装为可交互 AI 应用的端到端工程项目：本地 Logistic Regression 负责预测，FastAPI 提供服务，Streamlit 展示结果，DeepSeek 在用户明确同意后提供去标识化科研解读；本地医学文献 RAG 可以从自建 PDF 知识库检索证据，轻量 Agent 能按研究任务选择工具，并生成带已核验引用的可下载 Markdown 报告。
 
 > 本项目仅用于科研复现与工程学习演示，不可用于临床诊断、治疗或医疗决策。
 
@@ -14,6 +14,7 @@
 - 用基础 Logistic Regression 的 `标准化特征 × 系数` 展示样本级贡献度；
 - 通过 FastAPI、Streamlit 和可选 DeepSeek 解读形成完整应用链路；
 - 让受限制的 Agent 在白名单内选择本地预测或文献检索工具；
+- 将 Agent 的结构化结果确定性渲染为带文献依据的 Markdown 科研报告；
 - 用结构化输出校验、请求编号、环境变量和自动化测试保证工程可靠性。
 
 ## 项目亮点
@@ -26,6 +27,7 @@
 - **可配置与可测试**：模型路径、API 地址和 DeepSeek 模型通过环境变量切换；完整测试覆盖预测、API、网页、LLM 边界和配置。
 - **回答有据可查**：RAG 只允许 DeepSeek 引用本次本地检索到的来源编号，网页同时显示文献名、页码、原文片段和相似度。
 - **Agent 工具调用**：DeepSeek只负责选择 `predict_risk`、`search_literature` 和整理结果；本地代码校验参数、执行工具、限制调用次数并展示安全轨迹。
+- **可下载科研报告**：Python 固定模板负责章节和引用排版，不让大模型自由生成整份报告；报告只使用 Agent 已核验的来源。
 
 ## 系统架构
 
@@ -60,6 +62,10 @@ flowchart LR
     AT2 --> A
     A --> AR[结构化总结、引用与工具轨迹]
     AR --> UI
+    UI -->|POST /report/generate| API
+    AR --> MR[本地 Markdown 报告模板]
+    MR --> DL[网页预览与下载]
+    DL --> UI
 ```
 
 核心数据流：
@@ -70,6 +76,7 @@ flowchart LR
 概率/阈值/Top 贡献摘要 → 可选 DeepSeek 解读 → JSON 校验 → 分区展示
 用户问题 → 本地向量检索 → Top-k PDF 片段 → DeepSeek 基于证据回答 → 引用校验与展示
 研究任务 → Agent 选择白名单工具 → 本地执行 → 脱敏观察结果 → 最终 JSON 与工具轨迹
+报告任务 → 已校验 Agent 结果 → 本地固定 Markdown 模板 → 预览与下载
 ```
 
 ## 目录说明
@@ -80,6 +87,7 @@ app/
   api.py             FastAPI 接口、请求编号、统一错误响应
   deepseek.py        去标识化提示词、DeepSeek 调用、JSON/Pydantic 校验
   predictor.py       原始输入校验、标准化、概率预测、贡献度计算
+  report.py          校验 Agent 结果并生成固定结构的 Markdown 报告
   settings.py        环境变量与安全默认配置
 ui/
   dashboard.py       Streamlit 交互网页
@@ -187,7 +195,7 @@ python -m uvicorn app.api:app --reload
 python -m streamlit run ui/dashboard.py
 ```
 
-打开 `http://127.0.0.1:8501`，加载示例数据并点击“开始预测”。只有勾选外部 API 调用说明并主动点击相应按钮时，才会调用 DeepSeek。预测完成后可以运行“Agent 智能分析”，查看它选择了哪些本地工具；页面下方的“帕金森病医学文献助手”仍可独立回答一般性科研问题。
+打开 `http://127.0.0.1:8501`，加载示例数据并点击“开始预测”。只有勾选外部 API 调用说明并主动点击相应按钮时，才会调用 DeepSeek。预测完成后可以运行“Agent 智能分析”，或在“带文献依据的最终报告”区域生成、预览和下载 Markdown；页面下方的“帕金森病医学文献助手”仍可独立回答一般性科研问题。
 
 更完整的演示步骤、预期结果和排错方法见 [本地演示手册](docs/demo-runbook.md)。
 
@@ -200,6 +208,7 @@ python -m streamlit run ui/dashboard.py
 | `POST` | `/explain` | 本地重新预测后请求去标识化 DeepSeek 解读 | 是 |
 | `POST` | `/literature/ask` | 从本地 PDF 检索证据并生成带引用回答 | 是 |
 | `POST` | `/agent/analyze` | 让 Agent 选择本地预测/检索工具并返回结构化研究结果 | 是 |
+| `POST` | `/report/generate` | 运行 Agent 并把已校验结果渲染为可下载 Markdown 报告 | 是 |
 
 `POST /predict` 和 `POST /explain` 都接收同一组 12 项原始特征。示例请求见 `examples/sample_patient.json`。
 
@@ -227,6 +236,12 @@ python -m streamlit run ui/dashboard.py
   "request_id": "a1b2c3d4e5f6"
 }
 ```
+
+## 最终报告与引用边界
+
+`POST /report/generate` 接收与 `/agent/analyze` 相同的患者输入、研究问题和 1～5 的 `top_k`。后端先运行受限制 Agent，再由 `app/report.py` 本地生成固定的七个报告章节。返回值包括安全文件名、Markdown、引用数量、工具轨迹、提供方和模型名。
+
+报告生成器不会从 DeepSeek 的自由文本里猜测参考文献，也不会接受网页自行拼接的引用。它只遍历本次 Agent 已检索并通过 `source_id` 校验的 `citations`，因此报告格式稳定，引用来源也可以回到本地 PDF 页码核对。报告不包含 12 项原始特征，且始终保留科研用途声明。
 
 ## 模型与解释边界
 
