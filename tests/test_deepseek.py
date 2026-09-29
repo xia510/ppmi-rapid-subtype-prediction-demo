@@ -11,8 +11,10 @@ sys.path.insert(0, str(PROJECT_DIR))
 
 from app.deepseek import (
     DeepSeekRequestError,
+    build_agent_turn_request,
     build_grounded_answer_request,
     build_interpretation_request,
+    request_agent_turn,
     request_grounded_answer,
     request_interpretation,
 )
@@ -41,6 +43,20 @@ EVIDENCE = [
         "page": 2,
         "text": "Autonomic symptoms were associated with longitudinal outcomes.",
         "score": 0.91,
+    }
+]
+
+AGENT_MESSAGES = [
+    {"role": "user", "content": "研究问题：哪些因素与进展有关？"},
+]
+AGENT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "predict_risk",
+            "description": "Run the local model.",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
     }
 ]
 
@@ -150,7 +166,112 @@ class HttpErrorGroundedAnswerResponse(GroundedAnswerResponse):
         raise requests.HTTPError(response=self)
 
 
+class AgentToolCallResponse(FakeResponse):
+    arguments = "{}"
+
+    def json(self):
+        return {
+            "id": "chatcmpl-agent-tool",
+            "model": "deepseek-flash",
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call-predict-1",
+                                "type": "function",
+                                "function": {
+                                    "name": "predict_risk",
+                                    "arguments": self.arguments,
+                                },
+                            }
+                        ],
+                    }
+                }
+            ],
+        }
+
+
+class MalformedAgentToolCallResponse(AgentToolCallResponse):
+    arguments = "{not-json"
+
+
+class AgentFinalResponse(FakeResponse):
+    def json(self):
+        return {
+            "id": "chatcmpl-agent-final",
+            "model": "deepseek-flash",
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": json.dumps(
+                            {
+                                "answer_summary": "研究任务已经完成。",
+                                "prediction_summary": "模型概率低于研究阈值。",
+                                "evidence_summary": "本地证据支持群体层面的相关性。",
+                                "cited_source_ids": ["paper-a-p2-c1"],
+                                "research_disclaimer": "仅供科研演示，不构成临床建议。",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    }
+                }
+            ],
+        }
+
+
 class DeepSeekExplanationTests(unittest.TestCase):
+    def test_agent_request_contains_only_supplied_messages_and_allowlisted_tools(self):
+        request = build_agent_turn_request(AGENT_MESSAGES, AGENT_TOOLS)
+
+        self.assertEqual(request["messages"][1:], AGENT_MESSAGES)
+        self.assertEqual(request["tools"], AGENT_TOOLS)
+        self.assertEqual(request["tool_choice"], "auto")
+        serialized = json.dumps(request, ensure_ascii=False)
+        self.assertNotIn("patient_id", serialized)
+        self.assertNotIn("scopa", serialized)
+        self.assertIn("不得提供诊断", serialized)
+
+    def test_request_agent_turn_parses_tool_calls(self):
+        result = request_agent_turn(
+            AGENT_MESSAGES,
+            AGENT_TOOLS,
+            api_key="test-key",
+            http_post=lambda url, **kwargs: AgentToolCallResponse(),
+        )
+
+        self.assertEqual(result["kind"], "tool_calls")
+        self.assertEqual(result["tool_calls"], [
+            {"id": "call-predict-1", "name": "predict_risk", "arguments": {}}
+        ])
+        self.assertEqual(result["assistant_message"]["tool_calls"][0]["id"], "call-predict-1")
+        self.assertEqual(result["model"], "deepseek-flash")
+
+    def test_request_agent_turn_parses_valid_final_json(self):
+        result = request_agent_turn(
+            AGENT_MESSAGES,
+            AGENT_TOOLS,
+            api_key="test-key",
+            http_post=lambda url, **kwargs: AgentFinalResponse(),
+        )
+
+        self.assertEqual(result["kind"], "final")
+        self.assertEqual(result["final"]["cited_source_ids"], ["paper-a-p2-c1"])
+        self.assertEqual(result["final"]["answer_summary"], "研究任务已经完成。")
+        self.assertEqual(result["provider"], "DeepSeek")
+
+    def test_request_agent_turn_rejects_malformed_tool_arguments(self):
+        with self.assertRaisesRegex(DeepSeekRequestError, "tool arguments"):
+            request_agent_turn(
+                AGENT_MESSAGES,
+                AGENT_TOOLS,
+                api_key="test-key",
+                http_post=lambda url, **kwargs: MalformedAgentToolCallResponse(),
+            )
+
     def test_request_payload_excludes_patient_identifier_and_raw_features(self):
         request = build_interpretation_request(PREDICTION)
         serialized_messages = json.dumps(request["messages"], ensure_ascii=False)
