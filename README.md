@@ -1,6 +1,6 @@
 # PPMI Rapid Subtype Prediction Demo
 
-一个将科研机器学习模型封装为可交互 AI 应用的端到端工程项目：本地 Logistic Regression 负责预测，FastAPI 提供服务，Streamlit 展示结果，DeepSeek 在用户明确同意后提供去标识化科研解读；本地医学文献 RAG 还可以从自建 PDF 知识库检索证据并生成带页码引用的回答。
+一个将科研机器学习模型封装为可交互 AI 应用的端到端工程项目：本地 Logistic Regression 负责预测，FastAPI 提供服务，Streamlit 展示结果，DeepSeek 在用户明确同意后提供去标识化科研解读；本地医学文献 RAG 可以从自建 PDF 知识库检索证据，轻量 Agent 还能按研究任务选择并调用预测与文献工具。
 
 > 本项目仅用于科研复现与工程学习演示，不可用于临床诊断、治疗或医疗决策。
 
@@ -13,6 +13,7 @@
 - 用 sigmoid 校准后的 Logistic Regression 输出 Rapid 亚型概率；
 - 用基础 Logistic Regression 的 `标准化特征 × 系数` 展示样本级贡献度；
 - 通过 FastAPI、Streamlit 和可选 DeepSeek 解读形成完整应用链路；
+- 让受限制的 Agent 在白名单内选择本地预测或文献检索工具；
 - 用结构化输出校验、请求编号、环境变量和自动化测试保证工程可靠性。
 
 ## 项目亮点
@@ -24,6 +25,7 @@
 - **可观测性**：API 为每次请求生成 `request_id`，记录路径、状态码和耗时，不记录密钥或原始数据。
 - **可配置与可测试**：模型路径、API 地址和 DeepSeek 模型通过环境变量切换；完整测试覆盖预测、API、网页、LLM 边界和配置。
 - **回答有据可查**：RAG 只允许 DeepSeek 引用本次本地检索到的来源编号，网页同时显示文献名、页码、原文片段和相似度。
+- **Agent 工具调用**：DeepSeek只负责选择 `predict_risk`、`search_literature` 和整理结果；本地代码校验参数、执行工具、限制调用次数并展示安全轨迹。
 
 ## 系统架构
 
@@ -51,6 +53,13 @@ flowchart LR
     E --> L
     L --> R[带来源编号的回答]
     R --> UI
+    UI -->|POST /agent/analyze| A[受限制 Agent]
+    A -->|按任务选择| AT1[predict_risk]
+    A -->|按任务选择| AT2[search_literature]
+    AT1 --> A
+    AT2 --> A
+    A --> AR[结构化总结、引用与工具轨迹]
+    AR --> UI
 ```
 
 核心数据流：
@@ -60,12 +69,14 @@ flowchart LR
                          ↘ 基础模型贡献度
 概率/阈值/Top 贡献摘要 → 可选 DeepSeek 解读 → JSON 校验 → 分区展示
 用户问题 → 本地向量检索 → Top-k PDF 片段 → DeepSeek 基于证据回答 → 引用校验与展示
+研究任务 → Agent 选择白名单工具 → 本地执行 → 脱敏观察结果 → 最终 JSON 与工具轨迹
 ```
 
 ## 目录说明
 
 ```text
 app/
+  agent.py           Agent 工具白名单、有限循环、隐私投影和引用校验
   api.py             FastAPI 接口、请求编号、统一错误响应
   deepseek.py        去标识化提示词、DeepSeek 调用、JSON/Pydantic 校验
   predictor.py       原始输入校验、标准化、概率预测、贡献度计算
@@ -176,7 +187,7 @@ python -m uvicorn app.api:app --reload
 python -m streamlit run ui/dashboard.py
 ```
 
-打开 `http://127.0.0.1:8501`，加载示例数据并点击“开始预测”。只有勾选外部 API 调用说明并点击“生成 DeepSeek 辅助解读”时，才会调用 DeepSeek。页面下方的“帕金森病医学文献助手”与患者预测相互独立：输入一般性科研问题、确认外部调用后，即可查看带页码证据的回答。
+打开 `http://127.0.0.1:8501`，加载示例数据并点击“开始预测”。只有勾选外部 API 调用说明并主动点击相应按钮时，才会调用 DeepSeek。预测完成后可以运行“Agent 智能分析”，查看它选择了哪些本地工具；页面下方的“帕金森病医学文献助手”仍可独立回答一般性科研问题。
 
 更完整的演示步骤、预期结果和排错方法见 [本地演示手册](docs/demo-runbook.md)。
 
@@ -188,6 +199,7 @@ python -m streamlit run ui/dashboard.py
 | `POST` | `/predict` | 返回校准概率、研究阈值和全部贡献度 | 否 |
 | `POST` | `/explain` | 本地重新预测后请求去标识化 DeepSeek 解读 | 是 |
 | `POST` | `/literature/ask` | 从本地 PDF 检索证据并生成带引用回答 | 是 |
+| `POST` | `/agent/analyze` | 让 Agent 选择本地预测/检索工具并返回结构化研究结果 | 是 |
 
 `POST /predict` 和 `POST /explain` 都接收同一组 12 项原始特征。示例请求见 `examples/sample_patient.json`。
 
@@ -227,7 +239,7 @@ python -m streamlit run ui/dashboard.py
 
 ## 隐私与安全边界
 
-发送给 DeepSeek 的内容仅包括：概率、研究阈值、研究标签、模型版本和 Top 正负贡献摘要。
+预测解读与 Agent 发送给 DeepSeek 的患者相关内容仅包括：概率、研究阈值、研究标签、模型版本和 Top 正负贡献摘要。Agent 还可能发送用户填写的研究问题，以及本次本地检索得到的文献片段。
 
 不会发送：
 
@@ -237,6 +249,8 @@ python -m streamlit run ui/dashboard.py
 - 完整模型文件或训练数据。
 
 文献问答会向 DeepSeek 发送“用户问题 + 本次检索出的 Top-k 文献片段及来源编号”。不要在问题中填写姓名、身份证号、联系方式、病历号或其他可识别个人的信息。DeepSeek 返回的引用编号若不在本次检索结果中，后端会拒绝该回答。
+
+Agent 只能调用 `predict_risk` 和 `search_literature`。未知工具、非法参数、完全相同的重复调用、第五次工具调用，以及引用本次未检索来源的结果都会被后端拒绝。网页展示的工具轨迹只有工具名和成功状态，不包含患者原始值。
 
 DeepSeek 输出必须是三个非空字段：`probability_summary`、`contribution_summary`、`research_disclaimer`。非 JSON、缺字段、空内容或额外字段都会被后端拒绝。真实 `.env`、模型包、预测输出和 Git 工作区均已通过 `.gitignore` 排除。
 
@@ -309,7 +323,7 @@ FastAPI 或 Streamlit 尚未启动，或端口与 `PPMI_API_BASE_URL` 不一致�
 
 ## 项目状态
 
-当前版本已完成模型打包、命令行预测、FastAPI、Streamlit、样本级贡献度、DeepSeek 结构化解读、本地 PDF 文献 RAG、带页码引用校验、隐私边界、请求日志、配置管理与自动化测试。后续可继续增加 PubMed 导入、重排序和 Agent 工具调用，但它们不属于当前最小可用版本。
+当前版本已完成模型打包、命令行预测、FastAPI、Streamlit、样本级贡献度、DeepSeek 结构化解读、本地 PDF 文献 RAG、带页码引用校验、Agent 工具调用、隐私边界、请求日志、配置管理与自动化测试。下一阶段可在这些结构化结果之上生成可下载的带文献依据最终报告。
 
 ## 免责声明
 

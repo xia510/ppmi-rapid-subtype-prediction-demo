@@ -11,6 +11,7 @@ from ui.dashboard import (
     FEATURE_NAMES,
     build_patient_payload,
     format_api_error,
+    request_agent_analysis,
     request_literature_answer,
     request_explanation,
 )
@@ -18,6 +19,66 @@ import ui.dashboard as dashboard
 
 
 class DashboardHelperTests(unittest.TestCase):
+    def test_request_agent_analysis_posts_patient_question_and_top_k(self):
+        response = Mock()
+        response.ok = True
+        response.json.return_value = {
+            "answer_summary": "完成研究分析。",
+            "tool_trace": [{"tool": "predict_risk", "status": "success"}],
+        }
+        patient = {"patient_id": "demo", "scopa": 1.0}
+
+        with patch("ui.dashboard.requests.post", return_value=response) as post:
+            result, error = request_agent_analysis(patient, "结合模型与文献", top_k=4)
+
+        self.assertIsNone(error)
+        self.assertEqual(result["answer_summary"], "完成研究分析。")
+        self.assertTrue(post.call_args.args[0].endswith("/agent/analyze"))
+        self.assertEqual(
+            post.call_args.kwargs["json"],
+            {"patient_id": "demo", "scopa": 1.0, "question": "结合模型与文献", "top_k": 4},
+        )
+        self.assertEqual(post.call_args.kwargs["timeout"], 90)
+
+    def test_format_api_error_explains_agent_failures(self):
+        cases = {
+            "invalid_agent_request": "Agent 输入",
+            "agent_upstream_unavailable": "DeepSeek",
+            "agent_execution_failed": "安全限制",
+        }
+        for code, expected_text in cases.items():
+            with self.subTest(code=code):
+                message = format_api_error(
+                    502,
+                    {
+                        "error": {"code": code, "message": "Internal detail."},
+                        "request_id": "agent12345678",
+                    },
+                )
+                self.assertIn(expected_text, message)
+                self.assertIn("请求编号：agent12345678", message)
+                self.assertNotIn("Internal detail.", message)
+
+    def test_agent_result_sections_preserve_fixed_order(self):
+        sections = dashboard.agent_result_sections(
+            {
+                "answer_summary": "回答。",
+                "prediction_summary": "预测。",
+                "evidence_summary": "证据。",
+                "research_disclaimer": "声明。",
+            }
+        )
+
+        self.assertEqual(
+            sections,
+            [
+                ("Agent 回答", "回答。"),
+                ("模型预测摘要", "预测。"),
+                ("文献证据摘要", "证据。"),
+                ("科研使用说明", "声明。"),
+            ],
+        )
+
     def test_build_patient_payload_preserves_feature_order_and_numeric_values(self):
         raw_values = {feature: str(index + 1) for index, feature in enumerate(FEATURE_NAMES)}
 
