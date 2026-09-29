@@ -13,7 +13,7 @@ sys.path.insert(0, str(PROJECT_DIR))
 from app.api import app, create_app
 from app.agent import AgentExecutionError
 from app.deepseek import DeepSeekConfigurationError, DeepSeekRequestError
-from app.rag import LiteratureIndexNotFoundError
+from app.rag import LiteratureIndexNotFoundError, RAGError
 from scripts.export_model import export_model_bundle
 from tests.data_support import authorized_source_root
 
@@ -270,6 +270,7 @@ class AgentApiTests(unittest.TestCase):
         cases = [
             (FileNotFoundError(), "model_artifact_unavailable"),
             (LiteratureIndexNotFoundError("missing"), "literature_index_unavailable"),
+            (RAGError("dimension mismatch"), "literature_rag_unavailable"),
             (DeepSeekConfigurationError("missing"), "deepseek_not_configured"),
         ]
         for error, expected_code in cases:

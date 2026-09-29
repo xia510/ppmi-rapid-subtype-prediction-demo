@@ -279,6 +279,13 @@ def create_app(
                 code="literature_index_unavailable",
                 message="Local literature index is unavailable.",
             )
+        except RAGError:
+            return _error_response(
+                request,
+                status_code=503,
+                code="literature_rag_unavailable",
+                message="The local literature RAG service is unavailable.",
+            )
         except DeepSeekConfigurationError:
             return _error_response(
                 request,
